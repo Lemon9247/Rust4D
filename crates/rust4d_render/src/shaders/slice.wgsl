@@ -138,7 +138,9 @@ fn edge_intersection(
     // Compute interpolation factor based on W coordinate
     let w0 = p0.w;
     let w1 = p1.w;
-    let t = (slice_w - w0) / (w1 - w0);
+    let dw = w1 - w0;
+    // Protect against division by zero when edge is parallel to slice plane
+    let t = select((slice_w - w0) / dw, 0.5, abs(dw) < 0.0001);
 
     // Interpolate position
     let pos = mix(p0, p1, t);
@@ -278,8 +280,25 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var v1 = intersection_points[u32(i1)];
         var v2 = intersection_points[u32(i2)];
 
-        // Compute and assign normal using helper functions
-        let normal = compute_normal(vertex_position(v0), vertex_position(v1), vertex_position(v2));
+        // Compute normal using helper functions
+        let p0 = vertex_position(v0);
+        let p1 = vertex_position(v1);
+        let p2 = vertex_position(v2);
+        var normal = compute_normal(p0, p1, p2);
+
+        // Ensure consistent outward-facing normals
+        // The cross-section of a convex shape should have outward-facing normals
+        // We use the triangle center as a proxy: if normal points toward origin,
+        // the winding is backwards
+        let tri_center = (p0 + p1 + p2) / 3.0;
+        if (dot(normal, tri_center) < 0.0) {
+            // Flip winding by swapping v1 and v2
+            let temp = v1;
+            v1 = v2;
+            v2 = temp;
+            normal = -normal;
+        }
+
         v0 = vertex_with_normal(v0, normal);
         v1 = vertex_with_normal(v1, normal);
         v2 = vertex_with_normal(v2, normal);
