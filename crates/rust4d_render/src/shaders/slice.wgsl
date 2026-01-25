@@ -78,8 +78,9 @@ struct SliceParams {
 
 // Lookup tables
 @group(1) @binding(0) var<storage, read> edge_table: array<u32, 32>;
-// tri_table is flattened from [32][12] to [384] - access with index case_idx * 12 + offset
-@group(1) @binding(1) var<storage, read> tri_table: array<i32, 384>;
+// tri_table is flattened from [32][24] to [768] - access with index case_idx * 24 + offset
+// Supports up to 8 triangles per case (tetrahedron: 4, prism: 8)
+@group(1) @binding(1) var<storage, read> tri_table: array<i32, 768>;
 
 // ============================================================================
 // Constants
@@ -259,12 +260,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // Generate triangles from lookup table
-    // tri_table is flattened: index = case_idx * 12 + offset
-    let tri_base = case_idx * 12u;
+    // tri_table is flattened: index = case_idx * 24 + offset
+    let tri_base = case_idx * 24u;
 
-    // Process triangles (up to 4 triangles, 12 indices)
+    // Process triangles (up to 8 triangles, 24 indices)
     var tri_idx: u32 = 0u;
-    while (tri_idx < 12u) {
+    while (tri_idx < 24u) {
         let i0 = tri_table[tri_base + tri_idx];
 
         // Check for end marker
@@ -280,19 +281,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var v1 = intersection_points[u32(i1)];
         var v2 = intersection_points[u32(i2)];
 
-        // Compute normal using helper functions
+        // Compute normal
         let p0 = vertex_position(v0);
         let p1 = vertex_position(v1);
         let p2 = vertex_position(v2);
         var normal = compute_normal(p0, p1, p2);
 
         // Ensure consistent outward-facing normals
-        // The cross-section of a convex shape should have outward-facing normals
-        // We use the triangle center as a proxy: if normal points toward origin,
-        // the winding is backwards
+        // Check if normal points toward the simplex centroid
+        // If so, flip winding so normals point outward (away from simplex interior)
         let tri_center = (p0 + p1 + p2) / 3.0;
-        if (dot(normal, tri_center) < 0.0) {
-            // Flip winding by swapping v1 and v2
+        let to_centroid = simplex_centroid - tri_center;
+        if (dot(normal, to_centroid) > 0.0) {
+            // Normal points toward simplex interior, flip to point outward
             let temp = v1;
             v1 = v2;
             v2 = temp;

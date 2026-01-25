@@ -3,6 +3,11 @@
 //! A 5-cell has 5 vertices and 10 edges. When sliced by a hyperplane,
 //! we get 2^5 = 32 possible configurations depending on which vertices
 //! are above or below the plane.
+//!
+//! Cross-section types:
+//! - 0 or 5 vertices above: no intersection
+//! - 1 or 4 vertices above: tetrahedron (4 triangles, 4 intersection points)
+//! - 2 or 3 vertices above: triangular prism (8 triangles, 6 intersection points)
 
 /// Edge definitions for a 5-cell
 /// Each edge connects two vertices (indexed 0-4)
@@ -26,11 +31,14 @@ pub const EDGES: [[usize; 2]; 10] = [
 pub const EDGE_TABLE: [u16; 32] = compute_edge_table();
 
 /// Triangle table: for each case, how to form triangles from intersection points.
-/// Each entry is up to 12 indices (4 triangles max), with -1 indicating end.
+/// Each entry is up to 24 indices (8 triangles max), with -1 indicating end.
 /// Indices refer to the order of intersection points in the crossed edges.
 ///
 /// The intersection points are ordered by the edge index they come from.
-pub const TRI_TABLE: [[i8; 12]; 32] = compute_tri_table();
+///
+/// For tetrahedron cases (4 points): 4 triangles covering the tetrahedron surface
+/// For prism cases (6 points): 8 triangles (2 caps + 3 quads split into 6 triangles)
+pub const TRI_TABLE: [[i8; 24]; 32] = compute_tri_table();
 
 /// Compute the edge table at compile time
 const fn compute_edge_table() -> [u16; 32] {
@@ -66,84 +74,76 @@ const fn compute_edge_table() -> [u16; 32] {
 
 /// Compute the triangle table at compile time
 /// This is more complex as we need to properly triangulate each case
-const fn compute_tri_table() -> [[i8; 12]; 32] {
-    // For simplicity, we'll use a pre-computed table based on the
-    // topology of the 5-cell cross-sections.
-    //
+const fn compute_tri_table() -> [[i8; 24]; 32] {
     // Case analysis:
     // - 0 or 5 vertices above: no intersection
-    // - 1 vertex above: tetrahedron (4 triangles from 4 intersection points)
-    // - 2 vertices above: triangular prism (6 triangles from 6 points)
-    // - 3 vertices above: triangular prism (same as 2 below, symmetric)
-    // - 4 vertices above: tetrahedron (same as 1 below, symmetric)
+    // - 1 or 4 vertices above: tetrahedron (4 triangles from 4 points)
+    // - 2 or 3 vertices above: triangular prism (8 triangles from 6 points)
 
-    let empty: [i8; 12] = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1];
+    let empty: [i8; 24] = [-1; 24];
 
-    // For 1 vertex above: 4 edges crossed, intersection is a tetrahedron
-    // We need to triangulate 4 points. Map intersection points to triangles.
-    // Point order depends on which edges are crossed.
+    // Tetrahedron: 4 points forming 4 triangular faces
+    // All combinations of 3 points from 4: (0,1,2), (0,1,3), (0,2,3), (1,2,3)
+    let tetra_4pts: [i8; 24] = [
+        0, 1, 2,  // face 0
+        0, 2, 3,  // face 1
+        0, 3, 1,  // face 2
+        1, 3, 2,  // face 3
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1  // unused
+    ];
+
+    // Triangular prism: 6 points forming 8 triangles
+    // Points 0,1,2 form one triangular cap (from first "above" vertex)
+    // Points 3,4,5 form other triangular cap (from second "above" vertex)
+    // The prism sides connect corresponding edges:
+    //   - Points 0,3 share connection to same "below" vertex
+    //   - Points 1,4 share connection to same "below" vertex
+    //   - Points 2,5 share connection to same "below" vertex
     //
-    // When v0 is above (case 1): edges 0,1,2,3 are crossed
-    // Points: p0 (edge0), p1 (edge1), p2 (edge2), p3 (edge3)
-    // Tetrahedron triangles: 012, 013, 023, 123 (but need consistent winding)
+    // Triangulation:
+    //   Cap A: 0-1-2
+    //   Cap B: 5-4-3 (reversed winding for opposite face)
+    //   Side 1 (quad 0-1-4-3): triangles 0-1-4, 0-4-3
+    //   Side 2 (quad 1-2-5-4): triangles 1-2-5, 1-5-4
+    //   Side 3 (quad 2-0-3-5): triangles 2-0-3, 2-3-5
+    let prism_6pts: [i8; 24] = [
+        0, 1, 2,  // cap A
+        5, 4, 3,  // cap B (opposite winding)
+        0, 1, 4,  // side 1a
+        0, 4, 3,  // side 1b
+        1, 2, 5,  // side 2a
+        1, 5, 4,  // side 2b
+        2, 0, 3,  // side 3a
+        2, 3, 5,  // side 3b
+    ];
 
-    let tetra_4pts: [i8; 12] = [0, 1, 2, 0, 2, 3, 0, 1, 3, 1, 2, 3];
-
-    // For 2 vertices above: 6 edges crossed, intersection is a triangular prism
-    // We need to triangulate 6 points forming two parallel triangles connected by 3 quads
-    //
-    // When v0,v1 above (case 3): edges 1,2,3,4,5,6 are crossed
-    // This gives 6 points that need proper triangulation
-
-    // The triangulation depends on the geometry, but a triangular prism has 8 triangles:
-    // 2 triangular caps + 3 quads (each quad = 2 triangles)
-    // But we only have space for 4 triangles in our format. We need to be smarter.
-
-    // Actually, for a convex 3D cross-section, we can use a simpler approach:
-    // triangulate from a central point, or use ear-clipping.
-    // For now, let's use a pre-computed table.
-
-    // Due to complexity, we'll compute a simplified version that works for common cases
-    let mut table: [[i8; 12]; 32] = [empty; 32];
+    let mut table: [[i8; 24]; 32] = [empty; 32];
 
     // Case 0: no vertices above (all below) - no intersection
     // Case 31: all vertices above - no intersection
     // These remain empty [-1, ...]
 
-    // Case 1: v0 above - tetrahedron at v0
-    // Edges crossed: 0,1,2,3 -> 4 points
+    // === Tetrahedron cases (1 vertex above) ===
+    // Case 1: v0 above - edges 0,1,2,3 crossed
     table[1] = tetra_4pts;
-
-    // Case 2: v1 above - tetrahedron at v1
-    // Edges crossed: 0,4,5,6 -> 4 points
+    // Case 2: v1 above - edges 0,4,5,6 crossed
     table[2] = tetra_4pts;
-
-    // Case 4: v2 above - tetrahedron at v2
-    // Edges crossed: 1,4,7,8 -> 4 points
+    // Case 4: v2 above - edges 1,4,7,8 crossed
     table[4] = tetra_4pts;
-
-    // Case 8: v3 above - tetrahedron at v3
-    // Edges crossed: 2,5,7,9 -> 4 points
+    // Case 8: v3 above - edges 2,5,7,9 crossed
     table[8] = tetra_4pts;
-
-    // Case 16: v4 above - tetrahedron at v4
-    // Edges crossed: 3,6,8,9 -> 4 points
+    // Case 16: v4 above - edges 3,6,8,9 crossed
     table[16] = tetra_4pts;
 
-    // Cases with 4 vertices above (symmetric to 1 above)
-    table[30] = tetra_4pts;  // v0 below (11110)
-    table[29] = tetra_4pts;  // v1 below (11101)
-    table[27] = tetra_4pts;  // v2 below (11011)
-    table[23] = tetra_4pts;  // v3 below (10111)
-    table[15] = tetra_4pts;  // v4 below (01111)
+    // === Tetrahedron cases (4 vertices above = 1 below) ===
+    table[30] = tetra_4pts;  // v0 below
+    table[29] = tetra_4pts;  // v1 below
+    table[27] = tetra_4pts;  // v2 below
+    table[23] = tetra_4pts;  // v3 below
+    table[15] = tetra_4pts;  // v4 below
 
-    // Cases with 2 or 3 vertices above create 6-point cross-sections
-    // These need more triangles. We'll use a simplified triangulation.
-    // For now, we create triangles from the first point as a fan
-    // This works for convex cross-sections.
-    let prism_6pts: [i8; 12] = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5];
-
-    // 2 vertices above cases
+    // === Prism cases (2 vertices above) ===
+    // Use prism triangulation: 2 caps + 3 quads = 8 triangles
     table[3] = prism_6pts;   // v0,v1 above
     table[5] = prism_6pts;   // v0,v2 above
     table[6] = prism_6pts;   // v1,v2 above
@@ -155,7 +155,7 @@ const fn compute_tri_table() -> [[i8; 12]; 32] {
     table[20] = prism_6pts;  // v2,v4 above
     table[24] = prism_6pts;  // v3,v4 above
 
-    // 3 vertices above cases (symmetric to 2 below)
+    // === Prism cases (3 vertices above = 2 below) ===
     table[7] = prism_6pts;   // v0,v1,v2 above (v3,v4 below)
     table[11] = prism_6pts;  // v0,v1,v3 above
     table[13] = prism_6pts;  // v0,v2,v3 above
@@ -195,17 +195,12 @@ mod tests {
     fn test_triangle_table_coverage() {
         // Verify that all non-empty cases have enough triangles
         // to properly cover the cross-section surface.
-        //
-        // BUG FOUND: For 6-point cross-sections (2 or 3 vertices above),
-        // the current prism_6pts fan triangulation only produces 4 triangles,
-        // but a proper triangular prism surface needs 8 triangles.
-        // This causes visual artifacts (the "pinwheel" effect).
 
         for case_idx in 0..32 {
             let edge_count = EDGE_TABLE[case_idx].count_ones();
             let mut tri_count = 0;
 
-            for i in (0..12).step_by(3) {
+            for i in (0..24).step_by(3) {
                 if TRI_TABLE[case_idx][i] >= 0 {
                     tri_count += 1;
                 } else {
@@ -222,15 +217,11 @@ mod tests {
                         case_idx, tri_count);
                 }
                 6 => {
-                    // 6 intersection points form a triangular prism
-                    // A proper prism surface has 8 triangles (2 caps + 3 quads)
-                    // But our current table only has 4!
-                    // This is the bug - we print a warning but don't fail
-                    // so we can document this as a known issue.
-                    if tri_count < 8 {
-                        println!("WARNING: Case {} has 6 points (prism) but only {} triangles (need 8 for closed surface)",
-                            case_idx, tri_count);
-                    }
+                    // 6 intersection points form a triangular prism (8 triangles)
+                    // 2 triangular caps + 3 quads (each split into 2 triangles)
+                    assert_eq!(tri_count, 8,
+                        "Case {} has 6 points (prism) but only {} triangles (need 8)",
+                        case_idx, tri_count);
                 }
                 _ => {}
             }
