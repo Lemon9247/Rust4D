@@ -5,10 +5,10 @@
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::PhysicalKey,
-    window::{Window, WindowId},
+    keyboard::{KeyCode, PhysicalKey},
+    window::{Fullscreen, Window, WindowId},
 };
 
 use rust4d_render::context::RenderContext;
@@ -143,6 +143,31 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(key) = event.physical_key {
+                    // Handle special keys on press
+                    if event.state == ElementState::Pressed {
+                        match key {
+                            KeyCode::Escape => {
+                                event_loop.exit();
+                                return;
+                            }
+                            KeyCode::KeyR => {
+                                self.camera.reset();
+                                log::info!("Camera reset to starting position");
+                            }
+                            KeyCode::KeyF => {
+                                if let Some(window) = &self.window {
+                                    let new_fullscreen = if window.fullscreen().is_some() {
+                                        None
+                                    } else {
+                                        Some(Fullscreen::Borderless(None))
+                                    };
+                                    window.set_fullscreen(new_fullscreen);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Pass to controller for movement keys
                     self.controller.process_keyboard(key, event.state);
                 }
             }
@@ -168,6 +193,16 @@ impl ApplicationHandler for App {
 
                 // Update camera
                 let _pos = self.controller.update(&mut self.camera, dt);
+
+                // Update window title with debug info
+                if let Some(window) = &self.window {
+                    let pos = self.camera.position;
+                    let title = format!(
+                        "Rust4D - Pos: ({:.1}, {:.1}, {:.1}, {:.1}) | Slice W: {:.2}",
+                        pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
+                    );
+                    window.set_title(&title);
+                }
 
                 // Render
                 if let (Some(ctx), Some(slice_pipeline), Some(render_pipeline)) = (
@@ -202,14 +237,16 @@ impl ApplicationHandler for App {
                         eye[2] + forward.z,
                     ];
                     let view_matrix = look_at_matrix(eye, target, [0.0, 1.0, 0.0]);
-                    let view_proj = rust4d_render::pipeline::mat4_mul(proj_matrix, view_matrix);
 
                     let render_uniforms = RenderUniforms {
-                        view_proj,
-                        camera_pos: eye,
-                        _padding: 0.0,
+                        view_matrix,
+                        projection_matrix: proj_matrix,
                         light_dir: [0.5, 1.0, 0.3],
-                        _padding2: 0.0,
+                        _padding: 0.0,
+                        ambient_strength: 0.3,
+                        diffuse_strength: 0.7,
+                        w_color_strength: 0.5,
+                        w_range: 2.0,
                     };
                     render_pipeline.update_uniforms(&ctx.queue, &render_uniforms);
 
