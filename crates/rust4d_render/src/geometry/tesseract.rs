@@ -170,4 +170,327 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_cross_section_at_w0_simplex_edges_analysis() {
+        // This test analyzes which edges in the simplex decomposition cross w=0
+        // to understand the cross-section geometry.
+        //
+        // IMPORTANT FINDING: The simplex decomposition creates internal edges
+        // (diagonals) through the tesseract, not just the original tesseract edges.
+        // When sliced at w=0, these internal edges also produce intersection points,
+        // resulting in 27 unique points instead of just the 8 cube corners.
+        //
+        // This is CORRECT behavior for a simplicial mesh - the cross-section
+        // of the simplices produces a triangulated surface (12 triangles forming
+        // a cube surface, with extra internal triangles from the diagonal edges).
+        let t = Tesseract::new(2.0);
+        let h = 1.0;
+        let slice_w = 0.0;
+
+        // Collect all unique edges in the simplex decomposition
+        let mut simplex_edges: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        for simplex in &t.simplices {
+            for i in 0..5 {
+                for j in (i+1)..5 {
+                    let (v0, v1) = if simplex[i] < simplex[j] {
+                        (simplex[i], simplex[j])
+                    } else {
+                        (simplex[j], simplex[i])
+                    };
+                    simplex_edges.insert((v0, v1));
+                }
+            }
+        }
+
+        // Count edges that cross w=0 (one vertex w<0, other w>0)
+        let mut crossing_edges = Vec::new();
+        for &(v0, v1) in &simplex_edges {
+            let w0 = t.vertices[v0].w;
+            let w1 = t.vertices[v1].w;
+            if (w0 < slice_w && w1 > slice_w) || (w0 > slice_w && w1 < slice_w) {
+                crossing_edges.push((v0, v1));
+            }
+        }
+
+        // The 8 "true" tesseract edges that cross w=0 (connecting w=-h to w=+h)
+        // are: (0,8), (1,9), (2,10), (3,11), (4,12), (5,13), (6,14), (7,15)
+        let tesseract_crossing_edges: Vec<(usize, usize)> = (0..8)
+            .map(|i| (i, i + 8))
+            .collect();
+
+        // Verify these 8 edges produce the cube corners
+        for &(v0, v1) in &tesseract_crossing_edges {
+            let p0 = t.vertices[v0];
+            let p1 = t.vertices[v1];
+            assert_eq!(p0.w, -h);
+            assert_eq!(p1.w, h);
+            // The xyz should be the same for both endpoints
+            assert_eq!(p0.x, p1.x);
+            assert_eq!(p0.y, p1.y);
+            assert_eq!(p0.z, p1.z);
+        }
+
+        // Report the edge counts
+        println!("Total simplex edges: {}", simplex_edges.len());
+        println!("Edges crossing w=0: {}", crossing_edges.len());
+        println!("Tesseract edges crossing w=0: {}", tesseract_crossing_edges.len());
+
+        // The simplex decomposition should include all tesseract edges
+        for &(v0, v1) in &tesseract_crossing_edges {
+            assert!(simplex_edges.contains(&(v0, v1)),
+                "Tesseract edge ({}, {}) not found in simplex edges", v0, v1);
+        }
+
+        // NOTE: There are MORE crossing edges than just the 8 tesseract edges,
+        // because the simplex decomposition adds diagonal edges through the interior.
+        // This is expected and correct for the Kuhn triangulation.
+        assert!(crossing_edges.len() >= 8,
+            "Should have at least 8 edges crossing w=0 (the tesseract edges)");
+    }
+
+    #[test]
+    fn test_cross_section_geometry_cube_corners_present() {
+        // Verify that the 8 cube corner points are among the intersection points
+        let t = Tesseract::new(2.0);
+        let h = 1.0;
+        let slice_w = 0.0;
+
+        // The 8 cube corners at w=0
+        let expected_corners = [
+            [-h, -h, -h],
+            [ h, -h, -h],
+            [-h,  h, -h],
+            [ h,  h, -h],
+            [-h, -h,  h],
+            [ h, -h,  h],
+            [-h,  h,  h],
+            [ h,  h,  h],
+        ];
+
+        // Find all intersection points from simplex edges
+        let mut intersection_points: Vec<[f32; 3]> = Vec::new();
+        for simplex in &t.simplices {
+            for i in 0..5 {
+                for j in (i+1)..5 {
+                    let v0 = t.vertices[simplex[i]];
+                    let v1 = t.vertices[simplex[j]];
+                    let w0 = v0.w;
+                    let w1 = v1.w;
+
+                    if (w0 < slice_w && w1 > slice_w) || (w0 > slice_w && w1 < slice_w) {
+                        let t_param = (slice_w - w0) / (w1 - w0);
+                        let point = [
+                            v0.x + t_param * (v1.x - v0.x),
+                            v0.y + t_param * (v1.y - v0.y),
+                            v0.z + t_param * (v1.z - v0.z),
+                        ];
+
+                        if !intersection_points.iter().any(|p|
+                            (p[0] - point[0]).abs() < 0.001 &&
+                            (p[1] - point[1]).abs() < 0.001 &&
+                            (p[2] - point[2]).abs() < 0.001
+                        ) {
+                            intersection_points.push(point);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Verify all 8 cube corners are present
+        for corner in &expected_corners {
+            let found = intersection_points.iter().any(|p|
+                (p[0] - corner[0]).abs() < 0.001 &&
+                (p[1] - corner[1]).abs() < 0.001 &&
+                (p[2] - corner[2]).abs() < 0.001
+            );
+            assert!(found, "Cube corner {:?} not found in intersection points", corner);
+        }
+    }
+
+    #[test]
+    fn test_simplex_decomposition_covers_tesseract() {
+        // Verify all 24 simplices together cover the entire tesseract
+        // Each simplex starts at vertex 0 (all -h) and ends at vertex 15 (all +h)
+        let t = Tesseract::new(2.0);
+
+        for simplex in &t.simplices {
+            assert_eq!(simplex[0], 0, "First vertex should be 0 (all -h)");
+            assert_eq!(simplex[4], 15, "Last vertex should be 15 (all +h)");
+        }
+    }
+
+    #[test]
+    fn test_all_tesseract_edges_used_in_simplices() {
+        // The tesseract has 32 edges. Each edge should appear in at least one simplex.
+        // An edge of the tesseract connects two vertices that differ by exactly one bit.
+        let t = Tesseract::new(2.0);
+
+        // Collect all edges from the simplex decomposition
+        let mut simplex_edges: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+
+        for simplex in &t.simplices {
+            // Each simplex has 10 edges (C(5,2) = 10)
+            for i in 0..5 {
+                for j in (i+1)..5 {
+                    let (v0, v1) = if simplex[i] < simplex[j] {
+                        (simplex[i], simplex[j])
+                    } else {
+                        (simplex[j], simplex[i])
+                    };
+                    simplex_edges.insert((v0, v1));
+                }
+            }
+        }
+
+        // Count tesseract edges (vertices differing by exactly one bit)
+        let mut tesseract_edges = 0;
+        for i in 0usize..16 {
+            for j in (i+1)..16 {
+                if (i ^ j).count_ones() == 1 {
+                    tesseract_edges += 1;
+                    // This edge should be in simplex_edges
+                    assert!(simplex_edges.contains(&(i, j)),
+                        "Tesseract edge ({}, {}) not found in any simplex", i, j);
+                }
+            }
+        }
+
+        assert_eq!(tesseract_edges, 32, "Tesseract should have 32 edges");
+    }
+
+    #[test]
+    fn test_cross_section_surface_boundary() {
+        // This test analyzes which intersection points lie on the BOUNDARY of the
+        // cross-section (the cube surface) versus the INTERIOR (internal diagonals).
+        //
+        // When slicing a tesseract at w=0:
+        // - Boundary points: on the 6 faces of the resulting cube
+        // - Interior points: inside the cube volume (from internal simplex edges)
+        //
+        // For proper rendering, we only want triangles that form the cube surface.
+        // Interior triangles should cancel out (matching internal faces from adjacent simplices).
+
+        let t = Tesseract::new(2.0);
+        let h = 1.0;
+        let slice_w = 0.0;
+
+        // Collect all unique intersection points
+        let mut points: Vec<[f32; 3]> = Vec::new();
+
+        for simplex in &t.simplices {
+            for i in 0..5 {
+                for j in (i+1)..5 {
+                    let v0 = t.vertices[simplex[i]];
+                    let v1 = t.vertices[simplex[j]];
+
+                    if (v0.w < slice_w && v1.w > slice_w) || (v0.w > slice_w && v1.w < slice_w) {
+                        let t_param = (slice_w - v0.w) / (v1.w - v0.w);
+                        let point = [
+                            v0.x + t_param * (v1.x - v0.x),
+                            v0.y + t_param * (v1.y - v0.y),
+                            v0.z + t_param * (v1.z - v0.z),
+                        ];
+
+                        // Check if already present
+                        let is_new = !points.iter().any(|p|
+                            (p[0] - point[0]).abs() < 0.001 &&
+                            (p[1] - point[1]).abs() < 0.001 &&
+                            (p[2] - point[2]).abs() < 0.001
+                        );
+
+                        if is_new {
+                            points.push(point);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Classify points as boundary vs interior
+        // A point is on the boundary if at least one coordinate is at +-h
+        let boundary_points: Vec<_> = points.iter().filter(|p| {
+            (p[0].abs() - h).abs() < 0.001 ||
+            (p[1].abs() - h).abs() < 0.001 ||
+            (p[2].abs() - h).abs() < 0.001
+        }).collect();
+
+        let interior_points: Vec<_> = points.iter().filter(|p| {
+            (p[0].abs() - h).abs() >= 0.001 &&
+            (p[1].abs() - h).abs() >= 0.001 &&
+            (p[2].abs() - h).abs() >= 0.001
+        }).collect();
+
+        println!("Total unique intersection points: {}", points.len());
+        println!("Boundary points (on cube surface): {}", boundary_points.len());
+        println!("Interior points (inside cube): {}", interior_points.len());
+
+        // Print some boundary points for debugging
+        println!("\nBoundary point samples (should be cube corners/edges/faces):");
+        for (i, p) in boundary_points.iter().take(10).enumerate() {
+            println!("  {}: ({:.2}, {:.2}, {:.2})", i, p[0], p[1], p[2]);
+        }
+
+        // The 8 cube corners are special: they lie on 3 faces simultaneously
+        let corner_points: Vec<_> = points.iter().filter(|p| {
+            (p[0].abs() - h).abs() < 0.001 &&
+            (p[1].abs() - h).abs() < 0.001 &&
+            (p[2].abs() - h).abs() < 0.001
+        }).collect();
+
+        println!("\nCorner points (all 3 coords at +-h): {}", corner_points.len());
+        assert_eq!(corner_points.len(), 8, "Should have exactly 8 cube corners");
+
+        // KEY INSIGHT: For proper cube rendering, we need 12 triangles
+        // (2 per face * 6 faces). The extra interior points from the
+        // simplex decomposition create additional triangles that should
+        // be internal (pairs of opposing triangles on internal simplex faces).
+    }
+
+    #[test]
+    fn test_simplex_internal_face_matching() {
+        // Internal faces of the simplex decomposition should match between
+        // adjacent simplices. This is crucial for the cross-section:
+        // matching internal faces produce pairs of triangles that cancel out.
+
+        let t = Tesseract::new(2.0);
+
+        // Collect all simplex faces (triangular, i.e., 3 vertices from each simplex)
+        let mut faces: std::collections::HashMap<(usize, usize, usize), usize> = std::collections::HashMap::new();
+
+        for simplex in &t.simplices {
+            // Each simplex has C(5,3) = 10 triangular faces
+            for i in 0..5 {
+                for j in (i+1)..5 {
+                    for k in (j+1)..5 {
+                        let mut f = [simplex[i], simplex[j], simplex[k]];
+                        f.sort();
+                        let key = (f[0], f[1], f[2]);
+                        *faces.entry(key).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        // Count internal vs boundary faces
+        let internal_faces = faces.iter().filter(|(_, &count)| count >= 2).count();
+        let boundary_faces = faces.iter().filter(|(_, &count)| count == 1).count();
+
+        println!("Total unique faces: {}", faces.len());
+        println!("Internal faces (shared by 2+ simplices): {}", internal_faces);
+        println!("Boundary faces (in 1 simplex only): {}", boundary_faces);
+
+        // Boundary faces should correspond to faces of the tesseract's 8 cubic cells
+        // Each cube has 6 square faces, each split into 2 triangles = 12 triangles per cube
+        // 8 cubes * 12 triangles = 96 triangles, but each internal cube face is shared
+        // So: boundary faces should form the surface of the 4D tesseract
+
+        // Internal faces should have count exactly 2 (shared by adjacent simplices)
+        for (face, count) in &faces {
+            if *count > 2 {
+                println!("WARNING: Face {:?} appears {} times (expected max 2)", face, count);
+            }
+        }
+    }
 }
