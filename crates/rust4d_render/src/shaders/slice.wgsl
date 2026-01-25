@@ -240,7 +240,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let edge_mask = edge_table[case_idx];
 
     // Compute intersection points for all crossed edges
+    // Also track which "above" and "below" vertex each point connects to
     var intersection_points: array<Vertex3D, 10>;
+    var above_vertex: array<u32, 10>;  // Which "above" vertex this point connects to
+    var below_vertex: array<u32, 10>;  // Which "below" vertex this point connects to
     var point_count: u32 = 0u;
 
     for (var edge_idx: u32 = 0u; edge_idx < 10u; edge_idx++) {
@@ -255,7 +258,129 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 colors[v1_idx],
                 slice_w
             );
+
+            // Track which vertex is "above" and which is "below" the slice plane
+            let v0_above = (case_idx & (1u << v0_idx)) != 0u;
+            if (v0_above) {
+                above_vertex[point_count] = v0_idx;
+                below_vertex[point_count] = v1_idx;
+            } else {
+                above_vertex[point_count] = v1_idx;
+                below_vertex[point_count] = v0_idx;
+            }
+
             point_count++;
+        }
+    }
+
+    // Compute centroid of intersection points for consistent normal orientation
+    var centroid = vec3<f32>(0.0, 0.0, 0.0);
+    for (var i: u32 = 0u; i < point_count; i++) {
+        centroid += vertex_position(intersection_points[i]);
+    }
+    centroid /= f32(point_count);
+
+    // For prism cases (6 points), reorder points for correct triangulation
+    // 2-above cases: 2 above vertices, 3 below vertices
+    // 3-above cases: 3 above vertices, 2 below vertices
+    if (point_count == 6u) {
+        var sorted_points: array<Vertex3D, 6>;
+
+        // Count above vertices
+        var num_above: u32 = 0u;
+        for (var v: u32 = 0u; v < 5u; v++) {
+            if ((case_idx & (1u << v)) != 0u) {
+                num_above++;
+            }
+        }
+
+        if (num_above == 2u) {
+            // 2-above case: iterate over 3 below vertices
+            // Find the two "above" vertices
+            var above_v1: u32 = 99u;
+            var above_v2: u32 = 99u;
+            for (var v: u32 = 0u; v < 5u; v++) {
+                if ((case_idx & (1u << v)) != 0u) {
+                    if (above_v1 == 99u) { above_v1 = v; }
+                    else { above_v2 = v; }
+                }
+            }
+
+            // Collect 3 "below" vertices in order
+            var below_verts: array<u32, 3>;
+            var bc: u32 = 0u;
+            for (var v: u32 = 0u; v < 5u; v++) {
+                if ((case_idx & (1u << v)) == 0u) {
+                    below_verts[bc] = v;
+                    bc++;
+                }
+            }
+
+            // Arrange: for each below vertex, place point from above_v1, then above_v2
+            var si: u32 = 0u;
+            for (var bi: u32 = 0u; bi < 3u; bi++) {
+                let tb = below_verts[bi];
+                for (var i: u32 = 0u; i < 6u; i++) {
+                    if (below_vertex[i] == tb && above_vertex[i] == above_v1) {
+                        sorted_points[si] = intersection_points[i];
+                        si++;
+                        break;
+                    }
+                }
+                for (var i: u32 = 0u; i < 6u; i++) {
+                    if (below_vertex[i] == tb && above_vertex[i] == above_v2) {
+                        sorted_points[si] = intersection_points[i];
+                        si++;
+                        break;
+                    }
+                }
+            }
+        } else {
+            // 3-above case: iterate over 2 below vertices
+            // Find the two "below" vertices
+            var below_v1: u32 = 99u;
+            var below_v2: u32 = 99u;
+            for (var v: u32 = 0u; v < 5u; v++) {
+                if ((case_idx & (1u << v)) == 0u) {
+                    if (below_v1 == 99u) { below_v1 = v; }
+                    else { below_v2 = v; }
+                }
+            }
+
+            // Collect 3 "above" vertices in order
+            var above_verts: array<u32, 3>;
+            var ac: u32 = 0u;
+            for (var v: u32 = 0u; v < 5u; v++) {
+                if ((case_idx & (1u << v)) != 0u) {
+                    above_verts[ac] = v;
+                    ac++;
+                }
+            }
+
+            // Arrange: for each above vertex, place point to below_v1, then below_v2
+            var si: u32 = 0u;
+            for (var ai: u32 = 0u; ai < 3u; ai++) {
+                let ta = above_verts[ai];
+                for (var i: u32 = 0u; i < 6u; i++) {
+                    if (above_vertex[i] == ta && below_vertex[i] == below_v1) {
+                        sorted_points[si] = intersection_points[i];
+                        si++;
+                        break;
+                    }
+                }
+                for (var i: u32 = 0u; i < 6u; i++) {
+                    if (above_vertex[i] == ta && below_vertex[i] == below_v2) {
+                        sorted_points[si] = intersection_points[i];
+                        si++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Copy sorted points back
+        for (var i: u32 = 0u; i < 6u; i++) {
+            intersection_points[i] = sorted_points[i];
         }
     }
 
@@ -288,12 +413,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var normal = compute_normal(p0, p1, p2);
 
         // Ensure consistent outward-facing normals
-        // Check if normal points toward the simplex centroid
-        // If so, flip winding so normals point outward (away from simplex interior)
+        // Check if normal points toward the centroid of the cross-section
+        // If so, flip winding so normals point outward
         let tri_center = (p0 + p1 + p2) / 3.0;
-        let to_centroid = simplex_centroid - tri_center;
+        let to_centroid = centroid - tri_center;
         if (dot(normal, to_centroid) > 0.0) {
-            // Normal points toward simplex interior, flip to point outward
+            // Normal points toward centroid, flip to point outward
             let temp = v1;
             v1 = v2;
             v2 = temp;

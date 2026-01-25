@@ -93,28 +93,33 @@ const fn compute_tri_table() -> [[i8; 24]; 32] {
     ];
 
     // Triangular prism: 6 points forming 8 triangles
-    // Points 0,1,2 form one triangular cap (from first "above" vertex)
-    // Points 3,4,5 form other triangular cap (from second "above" vertex)
-    // The prism sides connect corresponding edges:
-    //   - Points 0,3 share connection to same "below" vertex
-    //   - Points 1,4 share connection to same "below" vertex
-    //   - Points 2,5 share connection to same "below" vertex
+    //
+    // IMPORTANT: Points are now SORTED BY "BELOW" VERTEX in the shader!
+    // After sorting:
+    //   - Points 0,1 both connect to the FIRST "below" vertex (one from each "above" vertex)
+    //   - Points 2,3 both connect to the SECOND "below" vertex
+    //   - Points 4,5 both connect to the THIRD "below" vertex
+    //
+    // This means:
+    //   - Cap A is formed by points 0,2,4 (every other point, from first "above" vertex)
+    //   - Cap B is formed by points 1,3,5 (every other point, from second "above" vertex)
+    //   - Pairings are: 0-1, 2-3, 4-5 (adjacent points share same "below" vertex)
     //
     // Triangulation:
-    //   Cap A: 0-1-2
-    //   Cap B: 5-4-3 (reversed winding for opposite face)
-    //   Side 1 (quad 0-1-4-3): triangles 0-1-4, 0-4-3
-    //   Side 2 (quad 1-2-5-4): triangles 1-2-5, 1-5-4
-    //   Side 3 (quad 2-0-3-5): triangles 2-0-3, 2-3-5
+    //   Cap A: 0-2-4
+    //   Cap B: 1-5-3 (reversed winding for opposite face)
+    //   Side 1 (quad 0-2-3-1): triangles 0-2-3, 0-3-1
+    //   Side 2 (quad 2-4-5-3): triangles 2-4-5, 2-5-3
+    //   Side 3 (quad 4-0-1-5): triangles 4-0-1, 4-1-5
     let prism_6pts: [i8; 24] = [
-        0, 1, 2,  // cap A
-        5, 4, 3,  // cap B (opposite winding)
-        0, 1, 4,  // side 1a
-        0, 4, 3,  // side 1b
-        1, 2, 5,  // side 2a
-        1, 5, 4,  // side 2b
-        2, 0, 3,  // side 3a
-        2, 3, 5,  // side 3b
+        0, 2, 4,  // cap A
+        1, 5, 3,  // cap B (opposite winding)
+        0, 2, 3,  // side 1a
+        0, 3, 1,  // side 1b
+        2, 4, 5,  // side 2a
+        2, 5, 3,  // side 2b
+        4, 0, 1,  // side 3a
+        4, 1, 5,  // side 3b
     ];
 
     let mut table: [[i8; 24]; 32] = [empty; 32];
