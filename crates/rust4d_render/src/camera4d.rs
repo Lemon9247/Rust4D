@@ -90,6 +90,16 @@ impl Camera4D {
         self.slice_offset += delta;
     }
 
+    /// Reset camera to the default starting position and orientation
+    pub fn reset(&mut self) {
+        self.position = Vec4::new(0.0, 0.0, 5.0, 0.0);
+        self.orientation = Rotor4::IDENTITY;
+        self.slice_offset = 0.0;
+        self.pitch = 0.0;
+        self.yaw = 0.0;
+        self.roll_w = 0.0;
+    }
+
     /// Get the forward direction vector
     pub fn forward(&self) -> Vec4 {
         self.orientation.rotate(Vec4::new(0.0, 0.0, -1.0, 0.0))
