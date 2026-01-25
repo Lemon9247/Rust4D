@@ -6,3 +6,4 @@
 pub mod context;
 pub mod geometry;
 pub mod camera4d;
+pub mod pipeline;
