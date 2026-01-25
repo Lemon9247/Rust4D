@@ -60,8 +60,8 @@ impl CameraController {
             pending_yaw: 0.0,
             pending_pitch: 0.0,
 
-            move_speed: 5.0,
-            w_move_speed: 3.0,
+            move_speed: 3.0,
+            w_move_speed: 2.0,
             mouse_sensitivity: 0.003,
             w_rotation_sensitivity: 0.005,
         }
