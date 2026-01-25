@@ -1,0 +1,8 @@
+[package]
+name = "rust4d_input"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rust4d_math.workspace = true
+winit.workspace = true
