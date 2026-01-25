@@ -106,34 +106,45 @@ impl Default for SliceParams {
 }
 
 /// Render uniforms for the 3D rendering pass
+/// Layout: 160 bytes total (must match render.wgsl RenderUniforms)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct RenderUniforms {
-    /// View-projection matrix
-    pub view_proj: [[f32; 4]; 4],
-    /// Camera position in world space (for lighting)
-    pub camera_pos: [f32; 3],
-    /// Padding
-    pub _padding: f32,
-    /// Light direction (normalized)
+    /// View matrix (64 bytes)
+    pub view_matrix: [[f32; 4]; 4],
+    /// Projection matrix (64 bytes)
+    pub projection_matrix: [[f32; 4]; 4],
+    /// Light direction (normalized) + padding (16 bytes)
     pub light_dir: [f32; 3],
-    /// Padding
-    pub _padding2: f32,
+    pub _padding: f32,
+    /// Lighting parameters (16 bytes)
+    pub ambient_strength: f32,
+    pub diffuse_strength: f32,
+    pub w_color_strength: f32,
+    pub w_range: f32,
 }
 
 impl Default for RenderUniforms {
     fn default() -> Self {
         Self {
-            view_proj: [
+            view_matrix: [
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
-            camera_pos: [0.0, 0.0, 5.0],
+            projection_matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            light_dir: [0.5, 1.0, 0.3],
             _padding: 0.0,
-            light_dir: [0.0, 1.0, 0.0],
-            _padding2: 0.0,
+            ambient_strength: 0.3,
+            diffuse_strength: 0.7,
+            w_color_strength: 0.5,
+            w_range: 2.0,
         }
     }
 }
@@ -183,9 +194,9 @@ mod tests {
 
     #[test]
     fn test_render_uniforms_size() {
-        // 16 floats view_proj + 3 floats camera_pos + 1 padding + 3 floats light_dir + 1 padding
-        // = 24 floats = 96 bytes
-        assert_eq!(size_of::<RenderUniforms>(), 96);
+        // 16 floats view_matrix + 16 floats projection_matrix + 3 floats light_dir + 1 padding
+        // + 4 floats (ambient, diffuse, w_color, w_range) = 40 floats = 160 bytes
+        assert_eq!(size_of::<RenderUniforms>(), 160);
     }
 
     #[test]

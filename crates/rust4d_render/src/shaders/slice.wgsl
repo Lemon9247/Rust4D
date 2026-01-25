@@ -30,14 +30,25 @@ struct Simplex4D {
 }
 
 /// A 3D triangle vertex for output
+/// Layout must match Rust Vertex3D: 48 bytes total (12 floats)
+/// Using explicit float arrays to control memory layout precisely
 struct Vertex3D {
-    position: vec3<f32>,
-    _pad0: f32,
-    normal: vec3<f32>,
-    _pad1: f32,
-    color: vec4<f32>,
-    w_depth: f32,         // Original W coordinate for coloring
-    _pad2: vec3<f32>,
+    // position: 3 floats (12 bytes)
+    pos_x: f32,
+    pos_y: f32,
+    pos_z: f32,
+    // normal: 3 floats (12 bytes)
+    norm_x: f32,
+    norm_y: f32,
+    norm_z: f32,
+    // color: 4 floats (16 bytes)
+    color_r: f32,
+    color_g: f32,
+    color_b: f32,
+    color_a: f32,
+    // w_depth + padding: 2 floats (8 bytes)
+    w_depth: f32,
+    _padding: f32,
 }
 
 /// A 3D triangle (3 vertices)
@@ -67,7 +78,8 @@ struct SliceParams {
 
 // Lookup tables
 @group(1) @binding(0) var<storage, read> edge_table: array<u32, 32>;
-@group(1) @binding(1) var<storage, read> tri_table: array<array<i32, 12>, 32>;
+// tri_table is flattened from [32][12] to [384] - access with index case_idx * 12 + offset
+@group(1) @binding(1) var<storage, read> tri_table: array<i32, 384>;
 
 // ============================================================================
 // Constants
@@ -115,7 +127,7 @@ fn transform_4d(pos: vec4<f32>, mat: mat4x4<f32>) -> vec4<f32> {
 }
 
 /// Compute the intersection point on an edge between two 4D points
-/// Returns (3D position, interpolated W, interpolation factor)
+/// Returns a Vertex3D with position, color, and w_depth set (normal computed later)
 fn edge_intersection(
     p0: vec4<f32>,
     p1: vec4<f32>,
@@ -134,16 +146,38 @@ fn edge_intersection(
     // Interpolate color
     let color = mix(c0, c1, t);
 
-    // The W coordinate at intersection is slice_w by definition
-    // But we store the interpolated W for depth coloring
-    let w_depth = slice_w;
-
     var vertex: Vertex3D;
-    vertex.position = pos.xyz;
-    vertex.color = color;
-    vertex.w_depth = w_depth;
-    vertex.normal = vec3<f32>(0.0, 0.0, 0.0); // Will be computed later
+    // Set position
+    vertex.pos_x = pos.x;
+    vertex.pos_y = pos.y;
+    vertex.pos_z = pos.z;
+    // Set normal (will be computed later)
+    vertex.norm_x = 0.0;
+    vertex.norm_y = 0.0;
+    vertex.norm_z = 0.0;
+    // Set color
+    vertex.color_r = color.r;
+    vertex.color_g = color.g;
+    vertex.color_b = color.b;
+    vertex.color_a = color.a;
+    // Set w_depth (the slice_w coordinate)
+    vertex.w_depth = slice_w;
+    vertex._padding = 0.0;
     return vertex;
+}
+
+/// Helper to get position from Vertex3D
+fn vertex_position(v: Vertex3D) -> vec3<f32> {
+    return vec3<f32>(v.pos_x, v.pos_y, v.pos_z);
+}
+
+/// Helper to set normal on Vertex3D (returns a copy with normal set)
+fn vertex_with_normal(v: Vertex3D, normal: vec3<f32>) -> Vertex3D {
+    var result = v;
+    result.norm_x = normal.x;
+    result.norm_y = normal.y;
+    result.norm_z = normal.z;
+    return result;
 }
 
 /// Compute normal from three 3D points
@@ -223,31 +257,32 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // Generate triangles from lookup table
-    let tri_indices = tri_table[case_idx];
+    // tri_table is flattened: index = case_idx * 12 + offset
+    let tri_base = case_idx * 12u;
 
     // Process triangles (up to 4 triangles, 12 indices)
     var tri_idx: u32 = 0u;
     while (tri_idx < 12u) {
-        let i0 = tri_indices[tri_idx];
+        let i0 = tri_table[tri_base + tri_idx];
 
         // Check for end marker
         if (i0 < 0) {
             break;
         }
 
-        let i1 = tri_indices[tri_idx + 1u];
-        let i2 = tri_indices[tri_idx + 2u];
+        let i1 = tri_table[tri_base + tri_idx + 1u];
+        let i2 = tri_table[tri_base + tri_idx + 2u];
 
         // Get the three vertices
         var v0 = intersection_points[u32(i0)];
         var v1 = intersection_points[u32(i1)];
         var v2 = intersection_points[u32(i2)];
 
-        // Compute and assign normal
-        let normal = compute_normal(v0.position, v1.position, v2.position);
-        v0.normal = normal;
-        v1.normal = normal;
-        v2.normal = normal;
+        // Compute and assign normal using helper functions
+        let normal = compute_normal(vertex_position(v0), vertex_position(v1), vertex_position(v2));
+        v0 = vertex_with_normal(v0, normal);
+        v1 = vertex_with_normal(v1, normal);
+        v2 = vertex_with_normal(v2, normal);
 
         // Allocate output slot atomically
         let output_idx = atomicAdd(&triangle_count, 1u);
