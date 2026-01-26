@@ -5,10 +5,10 @@
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::{Fullscreen, Window, WindowId},
+    window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
 use rust4d_render::context::RenderContext;
@@ -31,6 +31,7 @@ struct App {
     camera: Camera4D,
     controller: CameraController,
     last_frame: std::time::Instant,
+    cursor_captured: bool,
 }
 
 impl App {
@@ -49,6 +50,7 @@ impl App {
             camera: Camera4D::new(),
             controller: CameraController::new(),
             last_frame: std::time::Instant::now(),
+            cursor_captured: false,
         }
     }
 
@@ -80,6 +82,33 @@ impl App {
             vertices.len(), tetrahedra.len());
 
         (vertices, tetrahedra)
+    }
+
+    /// Capture cursor for FPS-style controls
+    fn capture_cursor(&mut self) {
+        if let Some(window) = &self.window {
+            // Try Locked mode first (best for FPS), fall back to Confined
+            let grab_result = window.set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+
+            if grab_result.is_ok() {
+                window.set_cursor_visible(false);
+                self.cursor_captured = true;
+                log::info!("Cursor captured - Escape to release");
+            } else {
+                log::warn!("Failed to capture cursor");
+            }
+        }
+    }
+
+    /// Release cursor
+    fn release_cursor(&mut self) {
+        if let Some(window) = &self.window {
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+            window.set_cursor_visible(true);
+            self.cursor_captured = false;
+            log::info!("Cursor released - click to capture");
+        }
     }
 }
 
@@ -153,7 +182,12 @@ impl ApplicationHandler for App {
                     if event.state == ElementState::Pressed {
                         match key {
                             KeyCode::Escape => {
-                                event_loop.exit();
+                                // Escape releases cursor first, then exits if pressed again
+                                if self.cursor_captured {
+                                    self.release_cursor();
+                                } else {
+                                    event_loop.exit();
+                                }
                                 return;
                             }
                             KeyCode::KeyR => {
@@ -170,6 +204,10 @@ impl ApplicationHandler for App {
                                     window.set_fullscreen(new_fullscreen);
                                 }
                             }
+                            KeyCode::KeyG => {
+                                let enabled = self.controller.toggle_smoothing();
+                                log::info!("Input smoothing: {}", if enabled { "ON" } else { "OFF" });
+                            }
                             _ => {}
                         }
                     }
@@ -179,6 +217,10 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
+                // Click to capture cursor (FPS style)
+                if state == ElementState::Pressed && button == MouseButton::Left && !self.cursor_captured {
+                    self.capture_cursor();
+                }
                 self.controller.process_mouse_button(button, state);
             }
 
@@ -198,15 +240,22 @@ impl ApplicationHandler for App {
                 self.last_frame = now;
 
                 // Update camera
-                let _pos = self.controller.update(&mut self.camera, dt);
+                let _pos = self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
                 // Update window title with debug info
                 if let Some(window) = &self.window {
                     let pos = self.camera.position;
-                    let title = format!(
-                        "Rust4D - Pos: ({:.1}, {:.1}, {:.1}, {:.1}) | Slice W: {:.2}",
-                        pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
-                    );
+                    let title = if self.cursor_captured {
+                        format!(
+                            "Rust4D - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Esc to release]",
+                            pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
+                        )
+                    } else {
+                        format!(
+                            "Rust4D - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Click to capture]",
+                            pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
+                        )
+                    };
                     window.set_title(&title);
                 }
 
@@ -240,12 +289,14 @@ impl ApplicationHandler for App {
                         100.0,
                     );
                     let forward = self.camera.forward();
+                    let up = self.camera.up();
                     let target = [
                         eye[0] + forward.x,
                         eye[1] + forward.y,
                         eye[2] + forward.z,
                     ];
-                    let view_matrix = look_at_matrix(eye, target, [0.0, 1.0, 0.0]);
+                    // Use camera's actual up vector to avoid gimbal lock distortion
+                    let view_matrix = look_at_matrix(eye, target, [up.x, up.y, up.z]);
 
                     let render_uniforms = RenderUniforms {
                         view_matrix,
