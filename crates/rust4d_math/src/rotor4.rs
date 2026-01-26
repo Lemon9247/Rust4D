@@ -153,12 +153,13 @@ impl Rotor4 {
         }
     }
 
-    /// Rotate a 4D vector using the sandwich product: v' = R * v * R†
+    /// Rotate a 4D vector using the sandwich product: v' = R v R̃
     ///
-    /// This is the core operation for applying rotations.
+    /// This computes the sandwich product directly for correctness.
     pub fn rotate(&self, v: Vec4) -> Vec4 {
-        // For simple rotors (pure bivector rotations), we can use explicit formulas
-        // For general rotors, we compute the sandwich product step by step
+        // Compute R * v (rotor times vector)
+        // A vector v = v.x*e1 + v.y*e2 + v.z*e3 + v.w*e4
+        // R = s + b12*e12 + b13*e13 + b14*e14 + b23*e23 + b24*e24 + b34*e34 + p*e1234
 
         let s = self.s;
         let b12 = self.b_xy;
@@ -167,55 +168,54 @@ impl Rotor4 {
         let b23 = self.b_yz;
         let b24 = self.b_yw;
         let b34 = self.b_zw;
-        let ps = self.p;
+        let p = self.p;
 
-        let x = v.x;
-        let y = v.y;
-        let z = v.z;
-        let w = v.w;
+        // R * v produces vector and trivector parts
+        // Vector part of R*v (coefficients of e1, e2, e3, e4):
+        let rv_e1 = s * v.x + b12 * v.y + b13 * v.z + b14 * v.w;
+        let rv_e2 = s * v.y - b12 * v.x + b23 * v.z + b24 * v.w;
+        let rv_e3 = s * v.z - b13 * v.x - b23 * v.y + b34 * v.w;
+        let rv_e4 = s * v.w - b14 * v.x - b24 * v.y - b34 * v.z;
 
-        // Pre-compute squared terms
-        let s2 = s * s;
-        let b12_2 = b12 * b12;
-        let b13_2 = b13 * b13;
-        let b14_2 = b14 * b14;
-        let b23_2 = b23 * b23;
-        let b24_2 = b24 * b24;
-        let b34_2 = b34 * b34;
-        let ps2 = ps * ps;
+        // Trivector part of R*v (coefficients of e123, e124, e134, e234):
+        let rv_e123 = b12 * v.z - b13 * v.y + b23 * v.x + p * v.w;
+        let rv_e124 = b12 * v.w - b14 * v.y + b24 * v.x - p * v.z;
+        let rv_e134 = b13 * v.w - b14 * v.z + b34 * v.x + p * v.y;
+        let rv_e234 = b23 * v.w - b24 * v.z + b34 * v.y - p * v.x;
 
-        // The rotation matrix for R * v * R†
-        // Derived from the geometric algebra sandwich product
-        // For each basis vector, the diagonal term is (s² - b²) for bivectors
-        // that include that basis, and cross terms come from the sandwich product
+        // Now compute (R*v) * R̃
+        // R̃ = s - b12*e12 - b13*e13 - b14*e14 - b23*e23 - b24*e24 - b34*e34 + p*e1234
+        // (bivectors negate, scalar and pseudoscalar stay same)
 
-        // For x (e1): involved in b12, b13, b14
-        // Diagonal: s² - b12² - b13² - b14² + other terms from normalization
-        // For a unit rotor (s² + sum of b² = 1), this simplifies
+        // The vector part of (R*v)*R̃:
+        // From vector * scalar: rv_ei * s
+        // From vector * bivector: various terms
+        // From trivector * bivector: various terms
+        // From trivector * pseudoscalar: trivector * e1234 = vector
 
-        // x' component
-        let new_x = x * (s2 - b12_2 - b13_2 - b14_2 + b23_2 + b24_2 + b34_2 - ps2)
-            + 2.0 * y * (s * b12 + b13 * b23 + b14 * b24 + b34 * ps)
-            + 2.0 * z * (s * b13 - b12 * b23 + b14 * b34 - b24 * ps)
-            + 2.0 * w * (s * b14 - b12 * b24 - b13 * b34 + b23 * ps);
+        // e1 coefficient:
+        let new_x = rv_e1 * s
+            + rv_e2 * b12 + rv_e3 * b13 + rv_e4 * b14  // from e_i * e_1i
+            + rv_e123 * b23 + rv_e124 * b24 + rv_e134 * b34  // from e_1jk * e_jk
+            - rv_e234 * p;  // from e_234 * e_1234 = -e_1
 
-        // y' component
-        let new_y = 2.0 * x * (-s * b12 + b13 * b23 + b14 * b24 - b34 * ps)
-            + y * (s2 - b12_2 + b13_2 + b14_2 - b23_2 - b24_2 + b34_2 - ps2)
-            + 2.0 * z * (s * b23 + b12 * b13 - b24 * b34 + b14 * ps)
-            + 2.0 * w * (s * b24 + b12 * b14 + b23 * b34 - b13 * ps);
+        // e2 coefficient:
+        let new_y = rv_e2 * s
+            - rv_e1 * b12 + rv_e3 * b23 + rv_e4 * b24  // from e_i * e_2i
+            - rv_e123 * b13 - rv_e124 * b14 + rv_e234 * b34  // from e_2jk * e_jk
+            + rv_e134 * p;  // from e_134 * e_1234 = e_2
 
-        // z' component
-        let new_z = 2.0 * x * (-s * b13 - b12 * b23 + b14 * b34 + b24 * ps)
-            + 2.0 * y * (-s * b23 + b12 * b13 - b24 * b34 - b14 * ps)
-            + z * (s2 + b12_2 - b13_2 + b14_2 - b23_2 + b24_2 - b34_2 - ps2)
-            + 2.0 * w * (s * b34 + b13 * b14 + b23 * b24 + b12 * ps);
+        // e3 coefficient:
+        let new_z = rv_e3 * s
+            - rv_e1 * b13 - rv_e2 * b23 + rv_e4 * b34  // from e_i * e_3i
+            + rv_e123 * b12 - rv_e134 * b14 - rv_e234 * b24  // from e_3jk * e_jk
+            - rv_e124 * p;  // from e_124 * e_1234 = -e_3
 
-        // w' component
-        let new_w = 2.0 * x * (-s * b14 - b12 * b24 - b13 * b34 - b23 * ps)
-            + 2.0 * y * (-s * b24 + b12 * b14 + b23 * b34 + b13 * ps)
-            + 2.0 * z * (-s * b34 + b13 * b14 + b23 * b24 - b12 * ps)
-            + w * (s2 + b12_2 + b13_2 - b14_2 + b23_2 - b24_2 - b34_2 - ps2);
+        // e4 coefficient:
+        let new_w = rv_e4 * s
+            - rv_e1 * b14 - rv_e2 * b24 - rv_e3 * b34  // from e_i * e_4i
+            + rv_e124 * b12 + rv_e134 * b13 + rv_e234 * b23  // from e_4jk * e_jk
+            + rv_e123 * p;  // from e_123 * e_1234 = e_4
 
         Vec4::new(new_x, new_y, new_z, new_w)
     }
@@ -430,5 +430,206 @@ mod tests {
         assert!(approx_eq(m[1][0], 0.0) && approx_eq(m[1][1], 1.0) && approx_eq(m[1][2], 0.0) && approx_eq(m[1][3], 0.0));
         assert!(approx_eq(m[2][0], 0.0) && approx_eq(m[2][1], 0.0) && approx_eq(m[2][2], 1.0) && approx_eq(m[2][3], 0.0));
         assert!(approx_eq(m[3][0], 0.0) && approx_eq(m[3][1], 0.0) && approx_eq(m[3][2], 0.0) && approx_eq(m[3][3], 1.0));
+    }
+
+    #[test]
+    fn test_yz_rotation_90() {
+        // YZ rotation (pitch) - X axis unchanged
+        let r = Rotor4::from_plane_angle(RotationPlane::YZ, PI / 2.0);
+
+        // X should be unchanged
+        let rotated_x = r.rotate(Vec4::X);
+        assert!(vec_approx_eq(rotated_x, Vec4::X), "X should be unchanged, got {:?}", rotated_x);
+
+        // Y should go to Z
+        let rotated_y = r.rotate(Vec4::Y);
+        assert!(vec_approx_eq(rotated_y, Vec4::Z), "Y should become Z, got {:?}", rotated_y);
+
+        // Z should go to -Y
+        let rotated_z = r.rotate(Vec4::Z);
+        assert!(vec_approx_eq(rotated_z, -Vec4::Y), "Z should become -Y, got {:?}", rotated_z);
+    }
+
+    #[test]
+    fn test_composed_rotation_orthogonality() {
+        // Compose XZ (yaw) and YZ (pitch) rotations
+        let r_yaw = Rotor4::from_plane_angle(RotationPlane::XZ, PI / 4.0);
+        let r_pitch = Rotor4::from_plane_angle(RotationPlane::YZ, PI / 6.0);
+        let composed = r_pitch.compose(&r_yaw).normalize();
+
+        // Rotate basis vectors and verify orthonormality
+        let x = composed.rotate(Vec4::X);
+        let y = composed.rotate(Vec4::Y);
+        let z = composed.rotate(Vec4::Z);
+        let w = composed.rotate(Vec4::W);
+
+        // Check lengths are preserved
+        assert!(approx_eq(x.length(), 1.0), "X length not preserved: {}", x.length());
+        assert!(approx_eq(y.length(), 1.0), "Y length not preserved: {}", y.length());
+        assert!(approx_eq(z.length(), 1.0), "Z length not preserved: {}", z.length());
+        assert!(approx_eq(w.length(), 1.0), "W length not preserved: {}", w.length());
+
+        // Check orthogonality (dot products should be 0)
+        assert!(approx_eq(x.dot(y), 0.0), "X.Y not orthogonal: {}", x.dot(y));
+        assert!(approx_eq(x.dot(z), 0.0), "X.Z not orthogonal: {}", x.dot(z));
+        assert!(approx_eq(x.dot(w), 0.0), "X.W not orthogonal: {}", x.dot(w));
+        assert!(approx_eq(y.dot(z), 0.0), "Y.Z not orthogonal: {}", y.dot(z));
+        assert!(approx_eq(y.dot(w), 0.0), "Y.W not orthogonal: {}", y.dot(w));
+        assert!(approx_eq(z.dot(w), 0.0), "Z.W not orthogonal: {}", z.dot(w));
+    }
+
+    #[test]
+    fn test_multiple_rotation_composition() {
+        // Test composing all 4 rotation planes used in camera
+        let r_yaw = Rotor4::from_plane_angle(RotationPlane::XZ, 0.5);
+        let r_pitch = Rotor4::from_plane_angle(RotationPlane::YZ, 0.3);
+        let r_roll_w = Rotor4::from_plane_angle(RotationPlane::ZW, 0.2);
+        let r_roll_xw = Rotor4::from_plane_angle(RotationPlane::XW, 0.1);
+
+        let composed = r_roll_xw.compose(&r_roll_w.compose(&r_pitch.compose(&r_yaw))).normalize();
+
+        // Verify it's still a unit rotor
+        assert!(approx_eq(composed.magnitude(), 1.0), "Composed rotor not unit: {}", composed.magnitude());
+
+        // Verify rotation preserves lengths (use slightly larger epsilon for accumulated error)
+        let v = Vec4::new(1.0, 2.0, 3.0, 4.0);
+        let rotated = composed.rotate(v);
+        let length_error = (v.length() - rotated.length()).abs();
+        assert!(length_error < 0.001,
+            "Length not preserved: {} vs {} (error: {})", v.length(), rotated.length(), length_error);
+    }
+
+    #[test]
+    fn test_to_matrix_matches_rotate() {
+        // Verify that to_matrix produces the same results as rotate()
+        let r = Rotor4::from_plane_angle(RotationPlane::XZ, PI / 3.0)
+            .compose(&Rotor4::from_plane_angle(RotationPlane::YZ, PI / 4.0))
+            .normalize();
+
+        let m = r.to_matrix();
+        let v = Vec4::new(1.0, 2.0, 3.0, 4.0);
+
+        // Rotate using rotor
+        let rotated_rotor = r.rotate(v);
+
+        // Rotate using matrix (column-major: result = M * v)
+        let rotated_matrix = Vec4::new(
+            m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
+            m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
+            m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
+            m[0][3] * v.x + m[1][3] * v.y + m[2][3] * v.z + m[3][3] * v.w,
+        );
+
+        assert!(vec_approx_eq(rotated_rotor, rotated_matrix),
+            "Rotor and matrix give different results: {:?} vs {:?}", rotated_rotor, rotated_matrix);
+    }
+
+    #[test]
+    fn test_rotation_matrix_is_orthogonal() {
+        // An orthogonal matrix has M * M^T = I
+        let r = Rotor4::from_plane_angle(RotationPlane::XZ, 0.7)
+            .compose(&Rotor4::from_plane_angle(RotationPlane::ZW, 0.4))
+            .normalize();
+
+        let m = r.to_matrix();
+
+        // Check that column vectors are orthonormal
+        for i in 0..4 {
+            let col_i = Vec4::new(m[i][0], m[i][1], m[i][2], m[i][3]);
+            assert!(approx_eq(col_i.length(), 1.0), "Column {} not unit length", i);
+
+            for j in (i+1)..4 {
+                let col_j = Vec4::new(m[j][0], m[j][1], m[j][2], m[j][3]);
+                let dot = col_i.dot(col_j);
+                assert!(approx_eq(dot, 0.0), "Columns {} and {} not orthogonal: dot = {}", i, j, dot);
+            }
+        }
+    }
+
+    #[test]
+    fn test_same_plane_composition() {
+        // Composing two rotations in the same plane should add angles
+        let r1 = Rotor4::from_plane_angle(RotationPlane::XY, PI / 4.0);
+        let r2 = Rotor4::from_plane_angle(RotationPlane::XY, PI / 4.0);
+        let composed = r1.compose(&r2);
+
+        // Should be equivalent to 90° rotation
+        let expected = Rotor4::from_plane_angle(RotationPlane::XY, PI / 2.0);
+
+        let v = Vec4::X;
+        let rotated_composed = composed.rotate(v);
+        let rotated_expected = expected.rotate(v);
+
+        assert!(vec_approx_eq(rotated_composed, rotated_expected),
+            "Same-plane composition failed: {:?} vs {:?}", rotated_composed, rotated_expected);
+    }
+
+    #[test]
+    fn test_simple_composed_rotation() {
+        // Test a simple case: XZ then YZ rotation
+        // Apply rotations sequentially to a vector and compare
+        let r_xz = Rotor4::from_plane_angle(RotationPlane::XZ, PI / 2.0);
+        let r_yz = Rotor4::from_plane_angle(RotationPlane::YZ, PI / 2.0);
+
+        // Sequential: first XZ, then YZ
+        let v = Vec4::X;
+        let step1 = r_xz.rotate(v);
+        let step2 = r_yz.rotate(step1);
+
+        // Composed: YZ.compose(XZ) applies XZ first, then YZ
+        let composed = r_yz.compose(&r_xz);
+        let result = composed.rotate(v);
+
+        assert!(vec_approx_eq(step2, result),
+            "Sequential {:?} vs composed {:?}", step2, result);
+    }
+
+    #[test]
+    fn test_rotor_components_after_compose() {
+        // Compose XZ and YZ rotations and check the resulting rotor
+        let r_xz = Rotor4::from_plane_angle(RotationPlane::XZ, PI / 2.0);
+        let r_yz = Rotor4::from_plane_angle(RotationPlane::YZ, PI / 2.0);
+        let composed = r_yz.compose(&r_xz);
+
+        println!("r_xz: s={}, b_xz={}", r_xz.s, r_xz.b_xz);
+        println!("r_yz: s={}, b_yz={}", r_yz.s, r_yz.b_yz);
+        println!("composed: s={}, b_xy={}, b_xz={}, b_yz={}, p={}",
+            composed.s, composed.b_xy, composed.b_xz, composed.b_yz, composed.p);
+        println!("composed magnitude: {}", composed.magnitude());
+
+        // The composed rotor should be a unit rotor
+        assert!(approx_eq(composed.magnitude(), 1.0),
+            "Composed rotor not unit: {}", composed.magnitude());
+    }
+
+    #[test]
+    fn test_debug_rotation_formula() {
+        // Manual verification of the rotation formula
+        // Composed rotor: s=0.5, b_xy=0.5, b_xz=-0.5, b_yz=-0.5
+        // Expected result from GA: R*e1*R̃ = -e2 = (0, -1, 0, 0)
+
+        let r_xz = Rotor4::from_plane_angle(RotationPlane::XZ, PI / 2.0);
+        let r_yz = Rotor4::from_plane_angle(RotationPlane::YZ, PI / 2.0);
+        let composed = r_yz.compose(&r_xz);
+
+        // Print the rotation matrix
+        let m = composed.to_matrix();
+        println!("Rotation matrix for composed rotor:");
+        println!("[{:6.3} {:6.3} {:6.3} {:6.3}]", m[0][0], m[0][1], m[0][2], m[0][3]);
+        println!("[{:6.3} {:6.3} {:6.3} {:6.3}]", m[1][0], m[1][1], m[1][2], m[1][3]);
+        println!("[{:6.3} {:6.3} {:6.3} {:6.3}]", m[2][0], m[2][1], m[2][2], m[2][3]);
+        println!("[{:6.3} {:6.3} {:6.3} {:6.3}]", m[3][0], m[3][1], m[3][2], m[3][3]);
+
+        // The correct matrix should have:
+        // Column 0 (what X maps to): (0, -1, 0, 0) based on GA calculation
+        // Let's verify with sequential:
+        let x_via_seq = r_yz.rotate(r_xz.rotate(Vec4::X));
+        println!("X via sequential: {:?}", x_via_seq);
+
+        let x_via_composed = composed.rotate(Vec4::X);
+        println!("X via composed: {:?}", x_via_composed);
+
+        // The first column of the matrix tells us where X goes
+        println!("Matrix column 0: ({}, {}, {}, {})", m[0][0], m[1][0], m[2][0], m[3][0]);
     }
 }
