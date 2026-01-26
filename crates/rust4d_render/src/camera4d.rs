@@ -66,8 +66,8 @@ impl Camera4D {
         // This keeps the horizon level regardless of current orientation
         if delta_yaw.abs() > 0.0001 {
             let r_yaw = Rotor4::from_plane_angle(RotationPlane::XZ, delta_yaw);
-            // Apply yaw in world space: new_orientation = orientation * r_yaw
-            self.orientation = self.orientation.compose(&r_yaw).normalize();
+            // Apply yaw in world space: new_orientation = r_yaw * orientation
+            self.orientation = r_yaw.compose(&self.orientation).normalize();
         }
 
         // Pitch: rotate in camera-local YZ plane (around camera's right axis)
@@ -207,7 +207,7 @@ impl CameraControl for Camera4D {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f32::consts::FRAC_PI_2;
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
     const EPSILON: f32 = 0.0001;
 
@@ -426,19 +426,48 @@ mod tests {
 
     #[test]
     fn test_movement_after_4d_rotation() {
+        // After rotating 90° in ZW, we're looking into -W.
+        // World-space yaw (XZ plane) has no effect on a W-pointing vector.
+        // Movement follows the camera's forward direction, which is -W.
         let mut cam = Camera4D::new();
         cam.position = Vec4::ZERO;
 
-        // Rotate in ZW plane
+        // Rotate 90° in ZW plane - now looking into -W
         cam.rotate_w(FRAC_PI_2);
 
-        // Yaw 90° right
+        // Yaw 90° right - has no effect because forward is purely in W
         cam.rotate_3d(FRAC_PI_2, 0.0);
 
         // Move forward
         cam.move_local_xz(1.0, 0.0);
 
-        // Should still have moved primarily in +X direction (yaw is world-space)
-        assert!(cam.position.x > 0.5, "Yaw should still work in world XZ plane after ZW rotation, got X={}", cam.position.x);
+        // Forward is -W, but move_local_xz only affects XYZ position
+        // The forward vector projected onto XYZ is (0,0,0), so no XYZ movement
+        // This is expected behavior - when looking into pure W, XZ movement is zero
+        let fwd = cam.forward();
+        assert!(fwd.w.abs() > 0.9, "Should be looking into W, got fwd.w={}", fwd.w);
+    }
+
+    #[test]
+    fn test_pitch_preserved_after_yaw() {
+        // This test verifies that yaw is applied in world space.
+        // When you pitch up and then yaw, you should still be looking up.
+        let mut cam = Camera4D::new();
+
+        // Pitch up 45°
+        cam.rotate_3d(0.0, FRAC_PI_4);
+        let pitched_up = cam.up();
+
+        // Yaw 90° right
+        cam.rotate_3d(FRAC_PI_2, 0.0);
+
+        // Up vector's Y should be mostly preserved (horizon level)
+        let after_yaw = cam.up();
+        assert!((pitched_up.y - after_yaw.y).abs() < 0.01,
+            "Yaw should preserve up.y: before={}, after={}", pitched_up.y, after_yaw.y);
+
+        // Forward should have positive Y (still looking up)
+        let fwd = cam.forward();
+        assert!(fwd.y > 0.5, "Should still be looking up after yaw, got fwd.y={}", fwd.y);
     }
 }
