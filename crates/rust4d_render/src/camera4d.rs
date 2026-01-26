@@ -66,8 +66,8 @@ impl Camera4D {
         // This keeps the horizon level regardless of current orientation
         if delta_yaw.abs() > 0.0001 {
             let r_yaw = Rotor4::from_plane_angle(RotationPlane::XZ, delta_yaw);
-            // Apply yaw in world space: new_orientation = r_yaw * orientation
-            self.orientation = r_yaw.compose(&self.orientation).normalize();
+            // Apply yaw in world space: new_orientation = orientation * r_yaw
+            self.orientation = self.orientation.compose(&r_yaw).normalize();
         }
 
         // Pitch: rotate in camera-local YZ plane (around camera's right axis)
@@ -406,5 +406,39 @@ mod tests {
         // After pitch, forward should be between +X and +Y
         assert!(fwd.x > 0.5, "Forward should have positive X");
         assert!(fwd.y > 0.3, "Forward should have positive Y after pitching up");
+    }
+
+    #[test]
+    fn test_movement_follows_orientation() {
+        let mut cam = Camera4D::new();
+        cam.position = Vec4::ZERO;
+
+        // Yaw 90° right (now facing +X)
+        cam.rotate_3d(FRAC_PI_2, 0.0);
+
+        // Move forward
+        cam.move_local_xz(1.0, 0.0);
+
+        // Should have moved in +X direction
+        assert!(cam.position.x > 0.9, "Should move in +X after yawing right, got X={}", cam.position.x);
+        assert!(cam.position.z.abs() < 0.1, "Should not move in Z after yawing right, got Z={}", cam.position.z);
+    }
+
+    #[test]
+    fn test_movement_after_4d_rotation() {
+        let mut cam = Camera4D::new();
+        cam.position = Vec4::ZERO;
+
+        // Rotate in ZW plane
+        cam.rotate_w(FRAC_PI_2);
+
+        // Yaw 90° right
+        cam.rotate_3d(FRAC_PI_2, 0.0);
+
+        // Move forward
+        cam.move_local_xz(1.0, 0.0);
+
+        // Should still have moved primarily in +X direction (yaw is world-space)
+        assert!(cam.position.x > 0.5, "Yaw should still work in world XZ plane after ZW rotation, got X={}", cam.position.x);
     }
 }
