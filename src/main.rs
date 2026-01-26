@@ -13,7 +13,7 @@ use winit::{
 
 use rust4d_render::context::RenderContext;
 use rust4d_render::camera4d::Camera4D;
-use rust4d_render::geometry::Tesseract;
+use rust4d_render::geometry::{Tesseract, Hyperplane};
 use rust4d_render::pipeline::{
     SlicePipeline, RenderPipeline, SliceParams, RenderUniforms,
     Vertex4D, GpuTetrahedron, perspective_matrix, look_at_matrix,
@@ -38,7 +38,19 @@ impl App {
     fn new() -> Self {
         // Create tesseract geometry
         let mut tesseract = Tesseract::new(2.0);
-        let (vertices, tetrahedra) = Self::tesseract_to_tetrahedra(&mut tesseract);
+        let (mut vertices, mut tetrahedra) = Self::tesseract_to_tetrahedra(&mut tesseract);
+
+        // Create checkerboard hyperplane below the tesseract
+        // y=-2.0 (below tesseract), size=10 (extends from -10 to +10 in XZ),
+        // 10x10 grid, cell_size=2.0 for checkerboard, w_extent=5.0, tiny thickness
+        let hyperplane = Hyperplane::new(-2.0, 10.0, 10, 2.0, 5.0, 0.001);
+        let (plane_vertices, plane_tetrahedra) = Self::hyperplane_to_tetrahedra(&hyperplane, vertices.len());
+
+        // Combine geometry
+        vertices.extend(plane_vertices);
+        tetrahedra.extend(plane_tetrahedra);
+
+        log::info!("Total geometry: {} vertices, {} tetrahedra", vertices.len(), tetrahedra.len());
 
         Self {
             window: None,
@@ -79,6 +91,32 @@ impl App {
         }).collect();
 
         log::info!("Generated {} vertices and {} tetrahedra from tesseract",
+            vertices.len(), tetrahedra.len());
+
+        (vertices, tetrahedra)
+    }
+
+    /// Convert hyperplane geometry to GPU vertices and tetrahedra
+    fn hyperplane_to_tetrahedra(hyperplane: &Hyperplane, vertex_offset: usize) -> (Vec<Vertex4D>, Vec<GpuTetrahedron>) {
+        // Convert hyperplane vertices to GPU format with pre-computed colors
+        let vertices: Vec<Vertex4D> = hyperplane.vertices.iter()
+            .zip(hyperplane.colors.iter())
+            .map(|(v, color)| {
+                Vertex4D::new([v.x, v.y, v.z, v.w], *color)
+            })
+            .collect();
+
+        // Convert tetrahedra with offset for combined vertex buffer
+        let tetrahedra: Vec<GpuTetrahedron> = hyperplane.tetrahedra.iter().map(|tet| {
+            GpuTetrahedron::from_indices([
+                (tet.vertices[0] + vertex_offset) as u32,
+                (tet.vertices[1] + vertex_offset) as u32,
+                (tet.vertices[2] + vertex_offset) as u32,
+                (tet.vertices[3] + vertex_offset) as u32,
+            ])
+        }).collect();
+
+        log::info!("Generated {} vertices and {} tetrahedra from hyperplane",
             vertices.len(), tetrahedra.len());
 
         (vertices, tetrahedra)
