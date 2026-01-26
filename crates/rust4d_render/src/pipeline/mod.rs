@@ -14,7 +14,7 @@ pub use lookup_tables::{EDGES, EDGE_TABLE, TRI_TABLE};
 // Re-export types
 pub use types::{
     Vertex4D, Simplex4D, Vertex3D, SliceParams, RenderUniforms,
-    AtomicCounter, MAX_OUTPUT_TRIANGLES, TRIANGLE_VERTEX_COUNT,
+    AtomicCounter, GpuTetrahedron, MAX_OUTPUT_TRIANGLES, TRIANGLE_VERTEX_COUNT,
 };
 
 // Re-export pipelines

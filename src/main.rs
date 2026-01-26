@@ -16,7 +16,7 @@ use rust4d_render::camera4d::Camera4D;
 use rust4d_render::geometry::Tesseract;
 use rust4d_render::pipeline::{
     SlicePipeline, RenderPipeline, SliceParams, RenderUniforms,
-    Simplex4D, Vertex4D, perspective_matrix, look_at_matrix,
+    Vertex4D, GpuTetrahedron, perspective_matrix, look_at_matrix,
 };
 use rust4d_input::CameraController;
 
@@ -26,7 +26,8 @@ struct App {
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
     render_pipeline: Option<RenderPipeline>,
-    simplices: Vec<Simplex4D>,
+    vertices: Vec<Vertex4D>,
+    tetrahedra: Vec<GpuTetrahedron>,
     camera: Camera4D,
     controller: CameraController,
     last_frame: std::time::Instant,
@@ -35,46 +36,50 @@ struct App {
 impl App {
     fn new() -> Self {
         // Create tesseract geometry
-        let tesseract = Tesseract::new(2.0);
-        let simplices = Self::tesseract_to_simplices(&tesseract);
+        let mut tesseract = Tesseract::new(2.0);
+        let (vertices, tetrahedra) = Self::tesseract_to_tetrahedra(&mut tesseract);
 
         Self {
             window: None,
             render_context: None,
             slice_pipeline: None,
             render_pipeline: None,
-            simplices,
+            vertices,
+            tetrahedra,
             camera: Camera4D::new(),
             controller: CameraController::new(),
             last_frame: std::time::Instant::now(),
         }
     }
 
-    /// Convert tesseract geometry to GPU simplices
-    fn tesseract_to_simplices(tesseract: &Tesseract) -> Vec<Simplex4D> {
-        // Colors for the tesseract - gradient based on position
-        let colors = [
-            [1.0, 0.3, 0.3, 1.0], // Red
-            [0.3, 1.0, 0.3, 1.0], // Green
-            [0.3, 0.3, 1.0, 1.0], // Blue
-            [1.0, 1.0, 0.3, 1.0], // Yellow
-            [1.0, 0.3, 1.0, 1.0], // Magenta
-            [0.3, 1.0, 1.0, 1.0], // Cyan
-            [1.0, 0.6, 0.3, 1.0], // Orange
-            [0.6, 0.3, 1.0, 1.0], // Purple
-        ];
+    /// Convert tesseract geometry to GPU vertices and tetrahedra
+    fn tesseract_to_tetrahedra(tesseract: &mut Tesseract) -> (Vec<Vertex4D>, Vec<GpuTetrahedron>) {
+        // Convert tesseract vertices to GPU format with colors
+        let vertices: Vec<Vertex4D> = tesseract.vertices.iter().enumerate().map(|(_i, v)| {
+            // Color based on vertex position - creates visual gradient
+            let color = [
+                (v.x + 1.0) / 2.0, // Red from x
+                (v.y + 1.0) / 2.0, // Green from y
+                (v.z + 1.0) / 2.0, // Blue from z
+                1.0,
+            ];
+            Vertex4D::new([v.x, v.y, v.z, v.w], color)
+        }).collect();
 
-        tesseract.simplices.iter().enumerate().map(|(simplex_idx, indices)| {
-            let base_color = colors[simplex_idx % colors.len()];
-            let vertices: [Vertex4D; 5] = std::array::from_fn(|i| {
-                let v = tesseract.vertices[indices[i]];
-                Vertex4D {
-                    position: [v.x, v.y, v.z, v.w],
-                    color: base_color,
-                }
-            });
-            Simplex4D { vertices }
-        }).collect()
+        // Get tetrahedra decomposition
+        let tetrahedra: Vec<GpuTetrahedron> = tesseract.tetrahedra().iter().map(|tet| {
+            GpuTetrahedron::from_indices([
+                tet.vertices[0] as u32,
+                tet.vertices[1] as u32,
+                tet.vertices[2] as u32,
+                tet.vertices[3] as u32,
+            ])
+        }).collect();
+
+        log::info!("Generated {} vertices and {} tetrahedra from tesseract",
+            vertices.len(), tetrahedra.len());
+
+        (vertices, tetrahedra)
     }
 }
 
@@ -108,10 +113,11 @@ impl ApplicationHandler for App {
                 render_context.size.height,
             );
 
-            // Upload tesseract simplices
-            slice_pipeline.upload_simplices(&render_context.device, &self.simplices);
+            // Upload tesseract geometry (tetrahedra mode)
+            slice_pipeline.upload_tetrahedra(&render_context.device, &self.vertices, &self.tetrahedra);
 
-            log::info!("Loaded {} simplices from tesseract", self.simplices.len());
+            log::info!("Loaded {} vertices and {} tetrahedra from tesseract",
+                self.vertices.len(), self.tetrahedra.len());
 
             self.window = Some(window);
             self.render_context = Some(render_context);
@@ -210,12 +216,18 @@ impl ApplicationHandler for App {
                     &self.slice_pipeline,
                     &self.render_pipeline,
                 ) {
+                    // Camera position in 3D (use xyz of 4D position)
+                    let eye = [self.camera.position.x, self.camera.position.y, self.camera.position.z];
+
                     // Update slice parameters
                     let camera_matrix = self.camera.rotation_matrix();
                     let slice_params = SliceParams {
                         slice_w: self.camera.get_slice_w(),
-                        _padding: [0.0; 3],
+                        tetrahedron_count: self.tetrahedra.len() as u32,
+                        _padding: [0.0; 2],
                         camera_matrix,
+                        camera_eye: eye,
+                        _padding2: 0.0,
                     };
                     slice_pipeline.update_params(&ctx.queue, &slice_params);
 
@@ -227,9 +239,6 @@ impl ApplicationHandler for App {
                         0.1,
                         100.0,
                     );
-
-                    // Camera position in 3D (use xyz of 4D position)
-                    let eye = [self.camera.position.x, self.camera.position.y, self.camera.position.z];
                     let forward = self.camera.forward();
                     let target = [
                         eye[0] + forward.x,

@@ -34,6 +34,8 @@ impl Vertex4D {
 ///
 /// The simplex is the 4D equivalent of a tetrahedron.
 /// When sliced by a hyperplane, it produces 0-4 triangles.
+///
+/// **NOTE**: This is the legacy type. Prefer using `GpuTetrahedron` instead.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Simplex4D {
@@ -45,6 +47,40 @@ impl Simplex4D {
     /// Create a new simplex from 5 vertices
     pub fn new(vertices: [Vertex4D; 5]) -> Self {
         Self { vertices }
+    }
+}
+
+/// A tetrahedron (3-simplex) for GPU processing
+///
+/// Stores indices into a vertex buffer rather than the vertices themselves.
+/// When sliced by a hyperplane, produces 0-2 triangles:
+/// - 0 or 4 vertices above: no intersection
+/// - 1 or 3 vertices above: 1 triangle
+/// - 2 vertices above: 2 triangles (quad split)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct GpuTetrahedron {
+    /// Indices of the 4 vertices (into the vertex buffer)
+    pub v0: u32,
+    pub v1: u32,
+    pub v2: u32,
+    pub v3: u32,
+}
+
+impl GpuTetrahedron {
+    /// Create a new GPU tetrahedron from vertex indices
+    pub fn new(v0: u32, v1: u32, v2: u32, v3: u32) -> Self {
+        Self { v0, v1, v2, v3 }
+    }
+
+    /// Create from an array of indices
+    pub fn from_indices(indices: [u32; 4]) -> Self {
+        Self {
+            v0: indices[0],
+            v1: indices[1],
+            v2: indices[2],
+            v3: indices[3],
+        }
     }
 }
 
@@ -84,23 +120,32 @@ impl Default for Vertex3D {
 pub struct SliceParams {
     /// W-coordinate of the slicing hyperplane
     pub slice_w: f32,
+    /// Number of tetrahedra to process
+    pub tetrahedron_count: u32,
     /// Padding for 16-byte alignment
-    pub _padding: [f32; 3],
+    pub _padding: [f32; 2],
     /// 4D camera rotation matrix (transforms world to camera space)
     pub camera_matrix: [[f32; 4]; 4],
+    /// 3D camera eye position (for normal orientation)
+    pub camera_eye: [f32; 3],
+    /// Padding for 16-byte alignment
+    pub _padding2: f32,
 }
 
 impl Default for SliceParams {
     fn default() -> Self {
         Self {
             slice_w: 0.0,
-            _padding: [0.0; 3],
+            tetrahedron_count: 0,
+            _padding: [0.0; 2],
             camera_matrix: [
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            camera_eye: [0.0, 0.0, 5.0],
+            _padding2: 0.0,
         }
     }
 }
@@ -180,6 +225,12 @@ mod tests {
     }
 
     #[test]
+    fn test_gpu_tetrahedron_size() {
+        // 4 u32 indices = 16 bytes
+        assert_eq!(size_of::<GpuTetrahedron>(), 16);
+    }
+
+    #[test]
     fn test_vertex3d_size() {
         // 3 floats position + 3 floats normal + 4 floats color + 1 float w_depth + 1 float padding
         // = 12 floats = 48 bytes
@@ -188,8 +239,8 @@ mod tests {
 
     #[test]
     fn test_slice_params_size() {
-        // 1 float + 3 floats padding + 16 floats matrix = 80 bytes
-        assert_eq!(size_of::<SliceParams>(), 80);
+        // 1 float + 1 u32 + 2 floats padding + 16 floats matrix + 3 floats eye + 1 float padding = 96 bytes
+        assert_eq!(size_of::<SliceParams>(), 96);
     }
 
     #[test]

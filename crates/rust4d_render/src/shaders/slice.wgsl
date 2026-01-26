@@ -223,6 +223,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     colors[3] = simplex.v3.color;
     colors[4] = simplex.v4.color;
 
+    // Note: We use the origin (0,0,0) as the reference for normal orientation
+    // since the tesseract is centered at origin. All cross-section triangles
+    // should face outward (away from the origin).
+
     // Compute case index: which vertices are above the slice plane
     var case_idx: u32 = 0u;
     if (transformed[0].w > slice_w) { case_idx |= 1u; }
@@ -272,13 +276,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             point_count++;
         }
     }
-
-    // Compute centroid of intersection points for consistent normal orientation
-    var centroid = vec3<f32>(0.0, 0.0, 0.0);
-    for (var i: u32 = 0u; i < point_count; i++) {
-        centroid += vertex_position(intersection_points[i]);
-    }
-    centroid /= f32(point_count);
 
     // For prism cases (6 points), reorder points for correct triangulation
     // 2-above cases: 2 above vertices, 3 below vertices
@@ -336,7 +333,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 }
             }
         } else {
-            // 3-above case: iterate over 2 below vertices
+            // 3-above case: 3 above vertices, 2 below vertices
+            // To match TRI_TABLE pattern, we need pairs to share a common vertex
+            // For 3-above, pairs share the same ABOVE vertex
+            //
+            // Find the three "above" vertices
+            var above_verts: array<u32, 3>;
+            var ac: u32 = 0u;
+            for (var v: u32 = 0u; v < 5u; v++) {
+                if ((case_idx & (1u << v)) != 0u) {
+                    above_verts[ac] = v;
+                    ac++;
+                }
+            }
+
             // Find the two "below" vertices
             var below_v1: u32 = 99u;
             var below_v2: u32 = 99u;
@@ -347,20 +357,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 }
             }
 
-            // Collect 3 "above" vertices in order
-            var above_verts: array<u32, 3>;
-            var ac: u32 = 0u;
-            for (var v: u32 = 0u; v < 5u; v++) {
-                if ((case_idx & (1u << v)) != 0u) {
-                    above_verts[ac] = v;
-                    ac++;
-                }
-            }
-
-            // Arrange: for each above vertex, place point to below_v1, then below_v2
+            // Arrange points so pairs share same above vertex:
+            // Points 0,1 from above_verts[0] (to below_v1, below_v2)
+            // Points 2,3 from above_verts[1]
+            // Points 4,5 from above_verts[2]
+            //
+            // This gives:
+            // Cap A = 0,2,4 (all to below_v1)
+            // Cap B = 1,3,5 (all to below_v2)
+            // Pairs 0-1, 2-3, 4-5 share same above vertex
             var si: u32 = 0u;
             for (var ai: u32 = 0u; ai < 3u; ai++) {
                 let ta = above_verts[ai];
+                // First point: to below_v1
                 for (var i: u32 = 0u; i < 6u; i++) {
                     if (above_vertex[i] == ta && below_vertex[i] == below_v1) {
                         sorted_points[si] = intersection_points[i];
@@ -368,6 +377,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                         break;
                     }
                 }
+                // Second point: to below_v2
                 for (var i: u32 = 0u; i < 6u; i++) {
                     if (above_vertex[i] == ta && below_vertex[i] == below_v2) {
                         sorted_points[si] = intersection_points[i];
@@ -383,6 +393,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             intersection_points[i] = sorted_points[i];
         }
     }
+
+    // Track if this is a prism case for orientation handling
+    let is_prism = point_count == 6u;
 
     // Generate triangles from lookup table
     // tri_table is flattened: index = case_idx * 24 + offset
@@ -413,12 +426,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var normal = compute_normal(p0, p1, p2);
 
         // Ensure consistent outward-facing normals
-        // Check if normal points toward the centroid of the cross-section
-        // If so, flip winding so normals point outward
+        // The tesseract is centered at origin, so all cross-section triangles
+        // should face outward (away from origin). Check if normal points toward
+        // the triangle center direction (outward), if not, flip.
         let tri_center = (p0 + p1 + p2) / 3.0;
-        let to_centroid = centroid - tri_center;
-        if (dot(normal, to_centroid) > 0.0) {
-            // Normal points toward centroid, flip to point outward
+        // If normal points opposite to tri_center direction, it points inward - flip it
+        // DEBUG: Skip flipping for prisms to test if that's causing issues
+        if (!is_prism && dot(normal, tri_center) < 0.0) {
+            // Normal points toward origin (inward), flip to point outward
             let temp = v1;
             v1 = v2;
             v2 = temp;
@@ -430,7 +445,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         v2 = vertex_with_normal(v2, normal);
 
         // Allocate output slot atomically
-        let output_idx = atomicAdd(&triangle_count, 1u);
+        // Increment by 3 because DrawIndirect needs vertex count, not triangle count
+        let vertex_idx = atomicAdd(&triangle_count, 3u);
+        let output_idx = vertex_idx / 3u;
 
         // Write triangle to output
         triangles[output_idx].v0 = v0;

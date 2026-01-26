@@ -3,9 +3,33 @@
 //! A tesseract has 16 vertices (all combinations of ±h for x,y,z,w),
 //! 32 edges, 24 faces (squares), and 8 cells (cubes).
 //!
-//! For cross-section rendering, we decompose it into 24 5-cells (4D simplices).
+//! For cross-section rendering, we decompose it into tetrahedra (3-simplices).
+//! This is simpler than using 5-cells because tetrahedra always produce
+//! triangular cross-sections (never prisms).
 
 use rust4d_math::Vec4;
+use std::collections::HashSet;
+
+/// A tetrahedron (3-simplex) for 4D slicing
+/// Has 4 vertices and 6 edges
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Tetrahedron {
+    /// Indices into the tesseract's vertex array
+    pub vertices: [usize; 4],
+}
+
+impl Tetrahedron {
+    /// Create a new tetrahedron with sorted vertex indices (canonical form)
+    pub fn new_canonical(mut vertices: [usize; 4]) -> Self {
+        vertices.sort();
+        Self { vertices }
+    }
+
+    /// Create a new tetrahedron preserving vertex order
+    pub fn new(vertices: [usize; 4]) -> Self {
+        Self { vertices }
+    }
+}
 
 /// A tesseract (4D hypercube)
 pub struct Tesseract {
@@ -14,6 +38,8 @@ pub struct Tesseract {
     /// Indices into vertices forming 5-cells (4D simplices)
     /// Each 5-cell has 5 vertices
     pub simplices: Vec<[usize; 5]>,
+    /// Tetrahedra decomposition (computed lazily)
+    tetrahedra: Option<Vec<Tetrahedron>>,
 }
 
 impl Tesseract {
@@ -54,7 +80,69 @@ impl Tesseract {
 
         let simplices = Self::compute_simplex_decomposition();
 
-        Self { vertices, simplices }
+        Self { vertices, simplices, tetrahedra: None }
+    }
+
+    /// Get tetrahedra, computing them if needed
+    pub fn tetrahedra(&mut self) -> &[Tetrahedron] {
+        if self.tetrahedra.is_none() {
+            self.tetrahedra = Some(self.compute_unique_tetrahedra());
+        }
+        self.tetrahedra.as_ref().unwrap()
+    }
+
+    /// Compute tetrahedra decomposition from 5-cells
+    /// Each 5-cell is decomposed into 5 tetrahedra by omitting each vertex in turn
+    /// Returns deduplicated tetrahedra (shared faces only appear once)
+    fn compute_unique_tetrahedra(&self) -> Vec<Tetrahedron> {
+        let mut seen: HashSet<[usize; 4]> = HashSet::new();
+        let mut tetrahedra = Vec::new();
+
+        for simplex in &self.simplices {
+            // A 5-cell with vertices {v0,v1,v2,v3,v4} decomposes into 5 tetrahedra
+            // by omitting each vertex in turn
+            for omit in 0..5 {
+                let mut tet_verts = [0usize; 4];
+                let mut idx = 0;
+                for i in 0..5 {
+                    if i != omit {
+                        tet_verts[idx] = simplex[i];
+                        idx += 1;
+                    }
+                }
+
+                // Sort for canonical form (deduplication)
+                let mut canonical = tet_verts;
+                canonical.sort();
+
+                if seen.insert(canonical) {
+                    // Store with original vertex order for consistent orientation
+                    tetrahedra.push(Tetrahedron::new(tet_verts));
+                }
+            }
+        }
+
+        tetrahedra
+    }
+
+    /// Get the number of tetrahedra (computes if needed)
+    pub fn tetrahedron_count(&mut self) -> usize {
+        self.tetrahedra().len()
+    }
+
+    /// Get the vertices of a specific tetrahedron
+    pub fn get_tetrahedron_vertices(&mut self, tet_idx: usize) -> [Vec4; 4] {
+        // Ensure tetrahedra are computed
+        if self.tetrahedra.is_none() {
+            self.tetrahedra = Some(self.compute_unique_tetrahedra());
+        }
+        let indices = self.tetrahedra.as_ref().unwrap()[tet_idx].vertices;
+        [
+            self.vertices[indices[0]],
+            self.vertices[indices[1]],
+            self.vertices[indices[2]],
+            self.vertices[indices[3]],
+        ]
     }
 
     /// Compute the simplex decomposition of a tesseract
@@ -492,5 +580,148 @@ mod tests {
                 println!("WARNING: Face {:?} appears {} times (expected max 2)", face, count);
             }
         }
+    }
+
+    // ========== Tetrahedra decomposition tests ==========
+
+    #[test]
+    fn test_tetrahedra_decomposition_count() {
+        let mut t = Tesseract::new(2.0);
+        let count = t.tetrahedron_count();
+
+        // 24 5-cells, each decomposed into 5 tetrahedra = 120 naive
+        // After deduplication, should be fewer (shared tetrahedra)
+        println!("Tetrahedra count: {}", count);
+
+        // Each 5-cell contributes 5 tetrahedra, but many are shared
+        // The exact count depends on the Kuhn triangulation structure
+        assert!(count > 0, "Should have at least some tetrahedra");
+        assert!(count <= 120, "Should have at most 120 tetrahedra (24 * 5)");
+    }
+
+    #[test]
+    fn test_tetrahedra_have_four_vertices() {
+        let mut t = Tesseract::new(2.0);
+        for tet in t.tetrahedra() {
+            assert_eq!(tet.vertices.len(), 4);
+            // All indices should be valid
+            for &idx in &tet.vertices {
+                assert!(idx < 16, "Vertex index {} out of range", idx);
+            }
+        }
+    }
+
+    #[test]
+    fn test_tetrahedra_cover_tesseract_edges() {
+        // All 32 tesseract edges should appear in at least one tetrahedron
+        let mut t = Tesseract::new(2.0);
+
+        // Collect all edges from tetrahedra
+        let mut tet_edges: HashSet<(usize, usize)> = HashSet::new();
+        for tet in t.tetrahedra() {
+            // Each tetrahedron has 6 edges
+            for i in 0..4 {
+                for j in (i+1)..4 {
+                    let (v0, v1) = if tet.vertices[i] < tet.vertices[j] {
+                        (tet.vertices[i], tet.vertices[j])
+                    } else {
+                        (tet.vertices[j], tet.vertices[i])
+                    };
+                    tet_edges.insert((v0, v1));
+                }
+            }
+        }
+
+        // Check that all tesseract edges are covered
+        for i in 0usize..16 {
+            for j in (i+1)..16 {
+                if (i ^ j).count_ones() == 1 {
+                    // This is a tesseract edge
+                    assert!(tet_edges.contains(&(i, j)),
+                        "Tesseract edge ({}, {}) not in any tetrahedron", i, j);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_tetrahedra_slice_produces_triangles() {
+        // When sliced at w=0, each tetrahedron produces at most one triangle
+        let mut t = Tesseract::new(2.0);
+        let slice_w = 0.0;
+
+        let mut triangle_count = 0;
+
+        for tet in t.tetrahedra().to_vec() {
+            let verts: Vec<_> = tet.vertices.iter()
+                .map(|&i| t.vertices[i])
+                .collect();
+
+            // Count vertices above/below slice
+            let above_count = verts.iter().filter(|v| v.w > slice_w).count();
+
+            // Tetrahedra should produce triangles for cases 1,2,3 above
+            // (0 above = no intersection, 4 above = no intersection)
+            if above_count > 0 && above_count < 4 {
+                triangle_count += 1;
+            }
+        }
+
+        println!("Tetrahedra producing triangles at w=0: {}", triangle_count);
+        // Should have triangles (exact count depends on tesseract structure)
+        assert!(triangle_count > 0, "Should produce some triangles");
+    }
+
+    #[test]
+    fn test_tetrahedra_edge_crossing_count() {
+        // For tetrahedra:
+        // - 1 or 3 above: 3 edges crossed (triangle)
+        // - 2 above: 4 edges crossed (quadrilateral, split into 2 triangles)
+        let mut t = Tesseract::new(2.0);
+        let slice_w = 0.0;
+
+        let mut triangle_cases = 0;
+        let mut quad_cases = 0;
+
+        for tet in t.tetrahedra().to_vec() {
+            let verts: Vec<_> = tet.vertices.iter()
+                .map(|&i| t.vertices[i])
+                .collect();
+
+            let above: Vec<bool> = verts.iter().map(|v| v.w > slice_w).collect();
+            let above_count = above.iter().filter(|&&b| b).count();
+
+            if above_count == 0 || above_count == 4 {
+                continue; // No intersection
+            }
+
+            // Count edges crossed
+            let edges = [(0,1), (0,2), (0,3), (1,2), (1,3), (2,3)];
+            let crossed = edges.iter()
+                .filter(|&&(i, j)| above[i] != above[j])
+                .count();
+
+            match above_count {
+                1 | 3 => {
+                    assert_eq!(crossed, 3,
+                        "Tetrahedron with {} vertices above should have 3 edges crossed, got {}",
+                        above_count, crossed);
+                    triangle_cases += 1;
+                }
+                2 => {
+                    assert_eq!(crossed, 4,
+                        "Tetrahedron with 2 vertices above should have 4 edges crossed, got {}",
+                        crossed);
+                    quad_cases += 1;
+                }
+                _ => unreachable!()
+            }
+        }
+
+        println!("Triangle cases (1 or 3 above): {}", triangle_cases);
+        println!("Quad cases (2 above): {}", quad_cases);
+
+        assert!(triangle_cases > 0, "Should have some triangle cases");
+        assert!(quad_cases > 0, "Should have some quad cases");
     }
 }
