@@ -30,11 +30,17 @@ pub struct CameraController {
     pending_yaw: f32,
     pending_pitch: f32,
 
+    // Input smoothing state
+    smooth_yaw: f32,
+    smooth_pitch: f32,
+
     // Configuration
     pub move_speed: f32,
     pub w_move_speed: f32,
     pub mouse_sensitivity: f32,
     pub w_rotation_sensitivity: f32,
+    pub smoothing_half_life: f32,  // Exponential smoothing half-life in seconds
+    pub smoothing_enabled: bool,
 }
 
 impl Default for CameraController {
@@ -60,10 +66,15 @@ impl CameraController {
             pending_yaw: 0.0,
             pending_pitch: 0.0,
 
+            smooth_yaw: 0.0,
+            smooth_pitch: 0.0,
+
             move_speed: 3.0,
             w_move_speed: 2.0,
-            mouse_sensitivity: 0.003,
+            mouse_sensitivity: 0.002,  // Standard FPS sensitivity
             w_rotation_sensitivity: 0.005,
+            smoothing_half_life: 0.05,  // 50ms half-life when enabled
+            smoothing_enabled: false,   // Disabled by default for responsive FPS feel
         }
     }
 
@@ -106,8 +117,10 @@ impl CameraController {
     }
 
     /// Update the camera based on accumulated input
-    /// Returns the camera position for debug display
-    pub fn update<C: CameraControl>(&mut self, camera: &mut C, dt: f32) -> Vec4 {
+    ///
+    /// When `cursor_captured` is true, free look is enabled (no click required).
+    /// Returns the camera position for debug display.
+    pub fn update<C: CameraControl>(&mut self, camera: &mut C, dt: f32, cursor_captured: bool) -> Vec4 {
         // Calculate movement deltas
         let fwd = (self.forward as i32 - self.backward as i32) as f32;
         let rgt = (self.right as i32 - self.left as i32) as f32;
@@ -119,16 +132,36 @@ impl CameraController {
         camera.move_y(up_down * self.move_speed * dt);
         camera.move_w(w * self.w_move_speed * dt);
 
+        // Apply exponential smoothing to mouse input (engine4d-style)
+        let (yaw_input, pitch_input) = if self.smoothing_enabled && dt > 0.0 {
+            // Exponential smoothing: new = old * factor + input * (1 - factor)
+            // factor = 2^(-dt / half_life), so smaller half_life = faster response
+            let smooth_factor = 2.0f32.powf(-dt / self.smoothing_half_life);
+            self.smooth_yaw = self.smooth_yaw * smooth_factor + self.pending_yaw * (1.0 - smooth_factor);
+            self.smooth_pitch = self.smooth_pitch * smooth_factor + self.pending_pitch * (1.0 - smooth_factor);
+            (self.smooth_yaw, self.smooth_pitch)
+        } else {
+            // No smoothing - use raw input
+            (self.pending_yaw, self.pending_pitch)
+        };
+
         // Apply rotation
-        if self.mouse_pressed || self.w_rotation_mode {
+        // Free look when cursor is captured, or when mouse button is pressed
+        let can_look = cursor_captured || self.mouse_pressed;
+        if can_look || self.w_rotation_mode {
             if self.w_rotation_mode {
                 // Right-click: W-rotation mode
-                camera.rotate_w(self.pending_yaw * self.w_rotation_sensitivity);
-            } else {
-                // Left-click: Standard 3D rotation
+                // Horizontal mouse: ZW rotation (roll_w)
+                // Vertical mouse: XW rotation (roll_xw)
+                camera.rotate_w(yaw_input * self.w_rotation_sensitivity);
+                camera.rotate_xw(pitch_input * self.w_rotation_sensitivity);
+            } else if can_look {
+                // Free look: Standard 3D FPS rotation
+                // Mouse right (positive delta_x) should turn camera right (positive yaw)
+                // Mouse down (positive delta_y) should look down (negative pitch)
                 camera.rotate_3d(
-                    -self.pending_yaw * self.mouse_sensitivity,
-                    -self.pending_pitch * self.mouse_sensitivity,
+                    yaw_input * self.mouse_sensitivity,
+                    -pitch_input * self.mouse_sensitivity,
                 );
             }
         }
@@ -145,6 +178,50 @@ impl CameraController {
         self.forward || self.backward || self.left || self.right
             || self.up || self.down || self.ana || self.kata
     }
+
+    /// Toggle input smoothing on/off
+    pub fn toggle_smoothing(&mut self) -> bool {
+        self.smoothing_enabled = !self.smoothing_enabled;
+        // Reset smoothing state when toggling
+        self.smooth_yaw = 0.0;
+        self.smooth_pitch = 0.0;
+        self.smoothing_enabled
+    }
+
+    /// Check if smoothing is enabled
+    pub fn is_smoothing_enabled(&self) -> bool {
+        self.smoothing_enabled
+    }
+
+    /// Builder: set movement speed
+    pub fn with_move_speed(mut self, speed: f32) -> Self {
+        self.move_speed = speed;
+        self
+    }
+
+    /// Builder: set W-axis movement speed
+    pub fn with_w_move_speed(mut self, speed: f32) -> Self {
+        self.w_move_speed = speed;
+        self
+    }
+
+    /// Builder: set mouse sensitivity
+    pub fn with_mouse_sensitivity(mut self, sensitivity: f32) -> Self {
+        self.mouse_sensitivity = sensitivity;
+        self
+    }
+
+    /// Builder: set smoothing half-life (lower = more responsive)
+    pub fn with_smoothing_half_life(mut self, half_life: f32) -> Self {
+        self.smoothing_half_life = half_life;
+        self
+    }
+
+    /// Builder: enable or disable smoothing
+    pub fn with_smoothing(mut self, enabled: bool) -> Self {
+        self.smoothing_enabled = enabled;
+        self
+    }
 }
 
 /// Trait for camera control
@@ -155,5 +232,6 @@ pub trait CameraControl {
     fn move_w(&mut self, delta: f32);
     fn rotate_3d(&mut self, delta_yaw: f32, delta_pitch: f32);
     fn rotate_w(&mut self, delta: f32);
+    fn rotate_xw(&mut self, delta: f32);
     fn position(&self) -> Vec4;
 }
