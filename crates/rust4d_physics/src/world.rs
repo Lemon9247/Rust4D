@@ -2,6 +2,7 @@
 
 use crate::body::{BodyKey, RigidBody4D};
 use crate::collision::{aabb_vs_aabb, aabb_vs_plane, sphere_vs_aabb, sphere_vs_plane};
+use crate::material::PhysicsMaterial;
 use crate::shapes::{Collider, Plane4D};
 use rust4d_math::Vec4;
 use slotmap::SlotMap;
@@ -13,8 +14,8 @@ pub struct PhysicsConfig {
     pub gravity: f32,
     /// Y position of the floor plane
     pub floor_y: f32,
-    /// Default restitution (bounciness) for collisions
-    pub restitution: f32,
+    /// Physics material for the floor
+    pub floor_material: PhysicsMaterial,
 }
 
 impl Default for PhysicsConfig {
@@ -22,19 +23,28 @@ impl Default for PhysicsConfig {
         Self {
             gravity: -20.0,
             floor_y: 0.0,
-            restitution: 0.0,
+            floor_material: PhysicsMaterial::CONCRETE,
         }
     }
 }
 
 impl PhysicsConfig {
     /// Create a new physics config with custom values
+    ///
+    /// The `restitution` parameter sets floor material restitution for backwards compatibility.
+    /// For full material control, use `with_floor_material()`.
     pub fn new(gravity: f32, floor_y: f32, restitution: f32) -> Self {
         Self {
             gravity,
             floor_y,
-            restitution,
+            floor_material: PhysicsMaterial::new(PhysicsMaterial::CONCRETE.friction, restitution),
         }
+    }
+
+    /// Set the floor material
+    pub fn with_floor_material(mut self, material: PhysicsMaterial) -> Self {
+        self.floor_material = material;
+        self
     }
 }
 
@@ -44,6 +54,8 @@ pub struct PhysicsWorld {
     bodies: SlotMap<BodyKey, RigidBody4D>,
     /// The floor plane
     floor: Plane4D,
+    /// Physics material for the floor
+    floor_material: PhysicsMaterial,
     /// Physics configuration
     pub config: PhysicsConfig,
 }
@@ -59,6 +71,7 @@ impl PhysicsWorld {
         Self {
             bodies: SlotMap::with_key(),
             floor: Plane4D::floor(config.floor_y),
+            floor_material: config.floor_material,
             config,
         }
     }
@@ -147,7 +160,7 @@ impl PhysicsWorld {
                     let velocity_along_normal = body.velocity.dot(contact.normal);
                     if velocity_along_normal < 0.0 {
                         // Body is moving into the floor
-                        let restitution = body.material.restitution.max(self.config.restitution);
+                        let restitution = body.material.restitution.max(self.floor_material.restitution);
 
                         // Remove the normal component of velocity and optionally bounce
                         let normal_velocity = contact.normal * velocity_along_normal;
@@ -274,10 +287,14 @@ impl PhysicsWorld {
         }
 
         // Handle velocity response (simple push-apart)
+        // Use the maximum restitution between the two colliding bodies
+        let restitution_a = self.bodies[key_a].material.restitution;
+        let restitution_b = self.bodies[key_b].material.restitution;
+        let restitution = restitution_a.max(restitution_b);
+
         if !is_static_a {
             let vel_along_normal = self.bodies[key_a].velocity.dot(-contact.normal);
             if vel_along_normal < 0.0 {
-                let restitution = self.bodies[key_a].material.restitution.max(self.config.restitution);
                 let normal_velocity = -contact.normal * vel_along_normal;
                 self.bodies[key_a].velocity = self.bodies[key_a].velocity - normal_velocity * (1.0 + restitution);
             }
@@ -286,7 +303,6 @@ impl PhysicsWorld {
         if !is_static_b {
             let vel_along_normal = self.bodies[key_b].velocity.dot(contact.normal);
             if vel_along_normal < 0.0 {
-                let restitution = self.bodies[key_b].material.restitution.max(self.config.restitution);
                 let normal_velocity = contact.normal * vel_along_normal;
                 self.bodies[key_b].velocity = self.bodies[key_b].velocity - normal_velocity * (1.0 + restitution);
             }
@@ -309,7 +325,7 @@ mod tests {
         let config = PhysicsConfig::default();
         assert_eq!(config.gravity, -20.0);
         assert_eq!(config.floor_y, 0.0);
-        assert_eq!(config.restitution, 0.0);
+        assert_eq!(config.floor_material, PhysicsMaterial::CONCRETE);
     }
 
     #[test]
@@ -317,7 +333,7 @@ mod tests {
         let config = PhysicsConfig::new(-10.0, 5.0, 0.5);
         assert_eq!(config.gravity, -10.0);
         assert_eq!(config.floor_y, 5.0);
-        assert_eq!(config.restitution, 0.5);
+        assert_eq!(config.floor_material.restitution, 0.5);
     }
 
     #[test]

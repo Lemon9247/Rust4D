@@ -2,6 +2,7 @@
 //!
 //! The World manages all entities in the simulation.
 
+use std::collections::HashMap;
 use crate::Entity;
 use rust4d_physics::{PhysicsConfig, PhysicsWorld};
 use slotmap::{new_key_type, SlotMap};
@@ -23,6 +24,8 @@ new_key_type! {
 pub struct World {
     /// All entities in the world (using generational keys)
     entities: SlotMap<EntityKey, Entity>,
+    /// Index from entity names to keys (for fast name lookup)
+    name_index: HashMap<String, EntityKey>,
     /// Optional physics simulation (None = no physics)
     physics_world: Option<PhysicsWorld>,
 }
@@ -38,6 +41,7 @@ impl World {
     pub fn new() -> Self {
         Self {
             entities: SlotMap::with_key(),
+            name_index: HashMap::new(),
             physics_world: None,
         }
     }
@@ -46,6 +50,7 @@ impl World {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entities: SlotMap::with_capacity_and_key(capacity),
+            name_index: HashMap::new(),
             physics_world: None,
         }
     }
@@ -68,12 +73,30 @@ impl World {
 
     /// Add an entity to the world, returning its key
     pub fn add_entity(&mut self, entity: Entity) -> EntityKey {
-        self.entities.insert(entity)
+        // Get the name before moving the entity
+        let name = entity.name.clone();
+        let key = self.entities.insert(entity);
+
+        // If the entity has a name, add it to the index
+        if let Some(name) = name {
+            self.name_index.insert(name, key);
+        }
+
+        key
     }
 
     /// Remove an entity from the world and return it
     pub fn remove_entity(&mut self, key: EntityKey) -> Option<Entity> {
-        self.entities.remove(key)
+        // Remove from entities first
+        if let Some(entity) = self.entities.remove(key) {
+            // Clean up name index if the entity had a name
+            if let Some(ref name) = entity.name {
+                self.name_index.remove(name);
+            }
+            Some(entity)
+        } else {
+            None
+        }
     }
 
     /// Get a reference to an entity by key
@@ -84,6 +107,25 @@ impl World {
     /// Get a mutable reference to an entity by key
     pub fn get_entity_mut(&mut self, key: EntityKey) -> Option<&mut Entity> {
         self.entities.get_mut(key)
+    }
+
+    /// Get an entity by name
+    pub fn get_by_name(&self, name: &str) -> Option<(EntityKey, &Entity)> {
+        let key = *self.name_index.get(name)?;
+        let entity = self.entities.get(key)?;
+        Some((key, entity))
+    }
+
+    /// Get a mutable reference to an entity by name
+    pub fn get_by_name_mut(&mut self, name: &str) -> Option<(EntityKey, &mut Entity)> {
+        let key = *self.name_index.get(name)?;
+        let entity = self.entities.get_mut(key)?;
+        Some((key, entity))
+    }
+
+    /// Get all entities with a specific tag
+    pub fn get_by_tag<'a>(&'a self, tag: &'a str) -> impl Iterator<Item = (EntityKey, &'a Entity)> {
+        self.entities.iter().filter(move |(_, entity)| entity.has_tag(tag))
     }
 
     /// Get the number of entities
@@ -129,6 +171,7 @@ impl World {
     /// Clear all entities from the world
     pub fn clear(&mut self) {
         self.entities.clear();
+        self.name_index.clear();
     }
 
     /// Iterate over all entities
@@ -367,5 +410,123 @@ mod tests {
         let entity = world.get_entity(entity_handle).unwrap();
         assert_eq!(entity.transform.position.x, 5.0);
         assert_eq!(entity.transform.position.y, 5.0);
+    }
+
+    #[test]
+    fn test_get_by_name() {
+        let mut world = World::new();
+
+        // Add a named entity
+        let entity = make_test_entity().with_name("tesseract");
+        let key = world.add_entity(entity);
+
+        // Should be able to find by name
+        let result = world.get_by_name("tesseract");
+        assert!(result.is_some());
+        let (found_key, found_entity) = result.unwrap();
+        assert_eq!(found_key, key);
+        assert_eq!(found_entity.name, Some("tesseract".to_string()));
+
+        // Non-existent name should return None
+        assert!(world.get_by_name("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_get_by_name_mut() {
+        let mut world = World::new();
+
+        // Add a named entity
+        let entity = make_test_entity().with_name("tesseract");
+        let key = world.add_entity(entity);
+
+        // Should be able to get mutable reference by name
+        {
+            let result = world.get_by_name_mut("tesseract");
+            assert!(result.is_some());
+            let (found_key, entity) = result.unwrap();
+            assert_eq!(found_key, key);
+            entity.material = Material::RED;
+        }
+
+        // Verify the mutation worked
+        let entity = world.get_entity(key).unwrap();
+        assert_eq!(entity.material.base_color, [1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_get_by_tag() {
+        let mut world = World::new();
+
+        // Add entities with different tags
+        let dynamic1 = make_test_entity().with_tag("dynamic").with_name("dyn1");
+        let dynamic2 = make_test_entity().with_tag("dynamic").with_name("dyn2");
+        let static1 = make_test_entity().with_tag("static").with_name("stat1");
+        let _key1 = world.add_entity(dynamic1);
+        let _key2 = world.add_entity(dynamic2);
+        let _key3 = world.add_entity(static1);
+
+        // Should find 2 dynamic entities
+        let dynamic_entities: Vec<_> = world.get_by_tag("dynamic").collect();
+        assert_eq!(dynamic_entities.len(), 2);
+
+        // Should find 1 static entity
+        let static_entities: Vec<_> = world.get_by_tag("static").collect();
+        assert_eq!(static_entities.len(), 1);
+        assert_eq!(static_entities[0].1.name, Some("stat1".to_string()));
+
+        // Non-existent tag should return empty iterator
+        let none_entities: Vec<_> = world.get_by_tag("nonexistent").collect();
+        assert!(none_entities.is_empty());
+    }
+
+    #[test]
+    fn test_name_index_cleanup_on_remove() {
+        let mut world = World::new();
+
+        // Add a named entity
+        let entity = make_test_entity().with_name("tesseract");
+        let key = world.add_entity(entity);
+
+        // Should be able to find by name
+        assert!(world.get_by_name("tesseract").is_some());
+
+        // Remove the entity
+        world.remove_entity(key);
+
+        // Name should no longer be in the index
+        assert!(world.get_by_name("tesseract").is_none());
+    }
+
+    #[test]
+    fn test_name_index_cleanup_on_clear() {
+        let mut world = World::new();
+
+        // Add named entities
+        world.add_entity(make_test_entity().with_name("entity1"));
+        world.add_entity(make_test_entity().with_name("entity2"));
+
+        // Should be able to find by name
+        assert!(world.get_by_name("entity1").is_some());
+        assert!(world.get_by_name("entity2").is_some());
+
+        // Clear the world
+        world.clear();
+
+        // Names should no longer be in the index
+        assert!(world.get_by_name("entity1").is_none());
+        assert!(world.get_by_name("entity2").is_none());
+    }
+
+    #[test]
+    fn test_entity_without_name() {
+        let mut world = World::new();
+
+        // Add an unnamed entity
+        let entity = make_test_entity();
+        let key = world.add_entity(entity);
+
+        // Entity should exist but not be findable by any name
+        assert!(world.get_entity(key).is_some());
+        assert!(world.get_by_name("").is_none());
     }
 }
