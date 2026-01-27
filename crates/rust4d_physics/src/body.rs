@@ -296,6 +296,29 @@ impl StaticCollider {
         self.filter = filter;
         self
     }
+
+    /// Check if a position (ignoring Y) is within the XZW bounds of this collider
+    ///
+    /// This is used to detect when a player has walked off the edge of a bounded
+    /// floor. If the player's XZW position is outside all floor bounds, they're
+    /// in the void and should fall without colliding with floor edges.
+    ///
+    /// Returns `true` if the position is "over" this collider (within XZW bounds).
+    /// For planes (infinite surfaces), this always returns `true`.
+    pub fn is_position_over(&self, position: Vec4) -> bool {
+        match &self.collider {
+            Collider::AABB(aabb) => {
+                position.x >= aabb.min.x
+                    && position.x <= aabb.max.x
+                    && position.z >= aabb.min.z
+                    && position.z <= aabb.max.z
+                    && position.w >= aabb.min.w
+                    && position.w <= aabb.max.w
+            }
+            Collider::Plane(_) => true, // Infinite planes extend forever
+            Collider::Sphere(_) => false, // Spheres aren't floor surfaces
+        }
+    }
 }
 
 #[cfg(test)]
@@ -617,5 +640,84 @@ mod tests {
         // Off floor at X=12 - should NOT collide
         let outside_x = Sphere4D::new(Vec4::new(12.0, y_on_floor, 0.0, 0.0), radius);
         assert!(sphere_vs_aabb(&outside_x, aabb).is_none(), "Outside X should not collide");
+    }
+
+    // ===== is_position_over Tests =====
+
+    #[test]
+    fn test_is_position_over_aabb_inside() {
+        let floor = StaticCollider::floor_bounded(
+            0.0,   // y
+            10.0,  // half_size_xz (X/Z: -10 to +10)
+            5.0,   // half_size_w (W: -5 to +5)
+            5.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        );
+
+        // Position in center (any Y value)
+        assert!(floor.is_position_over(Vec4::new(0.0, 0.0, 0.0, 0.0)));
+        assert!(floor.is_position_over(Vec4::new(0.0, 100.0, 0.0, 0.0)));
+        assert!(floor.is_position_over(Vec4::new(0.0, -100.0, 0.0, 0.0)));
+
+        // Position near edges but inside
+        assert!(floor.is_position_over(Vec4::new(9.0, 0.0, 9.0, 4.0)));
+        assert!(floor.is_position_over(Vec4::new(-9.0, 0.0, -9.0, -4.0)));
+    }
+
+    #[test]
+    fn test_is_position_over_aabb_outside() {
+        let floor = StaticCollider::floor_bounded(
+            0.0,   // y
+            10.0,  // half_size_xz (X/Z: -10 to +10)
+            5.0,   // half_size_w (W: -5 to +5)
+            5.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        );
+
+        // Outside X bounds
+        assert!(!floor.is_position_over(Vec4::new(11.0, 0.0, 0.0, 0.0)));
+        assert!(!floor.is_position_over(Vec4::new(-11.0, 0.0, 0.0, 0.0)));
+
+        // Outside Z bounds
+        assert!(!floor.is_position_over(Vec4::new(0.0, 0.0, 11.0, 0.0)));
+        assert!(!floor.is_position_over(Vec4::new(0.0, 0.0, -11.0, 0.0)));
+
+        // Outside W bounds
+        assert!(!floor.is_position_over(Vec4::new(0.0, 0.0, 0.0, 6.0)));
+        assert!(!floor.is_position_over(Vec4::new(0.0, 0.0, 0.0, -6.0)));
+
+        // Outside multiple bounds
+        assert!(!floor.is_position_over(Vec4::new(15.0, 0.0, 15.0, 10.0)));
+    }
+
+    #[test]
+    fn test_is_position_over_plane() {
+        let floor = StaticCollider::floor(0.0, PhysicsMaterial::CONCRETE);
+
+        // Planes extend infinitely - always returns true
+        assert!(floor.is_position_over(Vec4::new(0.0, 0.0, 0.0, 0.0)));
+        assert!(floor.is_position_over(Vec4::new(1000.0, 0.0, 1000.0, 1000.0)));
+        assert!(floor.is_position_over(Vec4::new(-1000.0, 0.0, -1000.0, -1000.0)));
+    }
+
+    #[test]
+    fn test_is_position_over_ignores_y() {
+        let floor = StaticCollider::floor_bounded(
+            0.0,   // y: floor at y=0
+            10.0,  // half_size_xz
+            5.0,   // half_size_w
+            5.0,   // thickness (floor AABB: y from -5 to 0)
+            PhysicsMaterial::CONCRETE,
+        );
+
+        // Position inside XZW bounds but far above floor
+        assert!(floor.is_position_over(Vec4::new(0.0, 1000.0, 0.0, 0.0)));
+
+        // Position inside XZW bounds but far below floor
+        assert!(floor.is_position_over(Vec4::new(0.0, -1000.0, 0.0, 0.0)));
+
+        // Position outside W bounds - Y doesn't matter
+        assert!(!floor.is_position_over(Vec4::new(0.0, 0.0, 0.0, 10.0)));
+        assert!(!floor.is_position_over(Vec4::new(0.0, 1000.0, 0.0, 10.0)));
     }
 }
