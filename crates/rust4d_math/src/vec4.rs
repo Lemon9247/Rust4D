@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 /// 4D Vector with x, y, z, w components
 /// The w component represents the 4th spatial dimension (ana/kata)
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct Vec4 {
     pub x: f32,
     pub y: f32,
@@ -65,6 +65,67 @@ impl Vec4 {
     #[inline]
     pub fn lerp(self, other: Self, t: f32) -> Self {
         self * (1.0 - t) + other * t
+    }
+
+    /// Clamp each component between corresponding min and max values
+    #[inline]
+    pub fn clamp_components(self, min: Self, max: Self) -> Self {
+        Self::new(
+            self.x.clamp(min.x, max.x),
+            self.y.clamp(min.y, max.y),
+            self.z.clamp(min.z, max.z),
+            self.w.clamp(min.w, max.w),
+        )
+    }
+
+    /// Component-wise minimum
+    #[inline]
+    pub fn min_components(self, other: Self) -> Self {
+        Self::new(
+            self.x.min(other.x),
+            self.y.min(other.y),
+            self.z.min(other.z),
+            self.w.min(other.w),
+        )
+    }
+
+    /// Component-wise maximum
+    #[inline]
+    pub fn max_components(self, other: Self) -> Self {
+        Self::new(
+            self.x.max(other.x),
+            self.y.max(other.y),
+            self.z.max(other.z),
+            self.w.max(other.w),
+        )
+    }
+
+    /// Component-wise absolute value
+    #[inline]
+    pub fn abs(self) -> Self {
+        Self::new(self.x.abs(), self.y.abs(), self.z.abs(), self.w.abs())
+    }
+
+    /// Return the component with the sign of each normal component
+    #[inline]
+    pub fn sign(self) -> Self {
+        Self::new(
+            if self.x >= 0.0 { 1.0 } else { -1.0 },
+            if self.y >= 0.0 { 1.0 } else { -1.0 },
+            if self.z >= 0.0 { 1.0 } else { -1.0 },
+            if self.w >= 0.0 { 1.0 } else { -1.0 },
+        )
+    }
+
+    /// Component-wise multiplication (Hadamard product)
+    #[inline]
+    pub fn component_mul(self, other: Self) -> Self {
+        Self::new(
+            self.x * other.x,
+            self.y * other.y,
+            self.z * other.z,
+            self.w * other.w,
+        )
     }
 }
 
@@ -258,5 +319,52 @@ mod tests {
         assert_eq!(mid.y, 5.0);
         assert_eq!(mid.z, 5.0);
         assert_eq!(mid.w, 5.0);
+    }
+
+    #[test]
+    fn test_clamp_components() {
+        let v = Vec4::new(-1.0, 5.0, 2.5, 10.0);
+        let min = Vec4::new(0.0, 0.0, 0.0, 0.0);
+        let max = Vec4::new(3.0, 3.0, 3.0, 3.0);
+        let clamped = v.clamp_components(min, max);
+        assert_eq!(clamped.x, 0.0);
+        assert_eq!(clamped.y, 3.0);
+        assert_eq!(clamped.z, 2.5);
+        assert_eq!(clamped.w, 3.0);
+    }
+
+    #[test]
+    fn test_min_max_components() {
+        let a = Vec4::new(1.0, 5.0, 2.0, 8.0);
+        let b = Vec4::new(3.0, 2.0, 4.0, 6.0);
+        let min = a.min_components(b);
+        let max = a.max_components(b);
+        assert_eq!(min, Vec4::new(1.0, 2.0, 2.0, 6.0));
+        assert_eq!(max, Vec4::new(3.0, 5.0, 4.0, 8.0));
+    }
+
+    #[test]
+    fn test_abs() {
+        let v = Vec4::new(-1.0, 2.0, -3.0, 4.0);
+        let abs = v.abs();
+        assert_eq!(abs, Vec4::new(1.0, 2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn test_sign() {
+        let v = Vec4::new(-1.0, 2.0, 0.0, -0.5);
+        let sign = v.sign();
+        assert_eq!(sign.x, -1.0);
+        assert_eq!(sign.y, 1.0);
+        assert_eq!(sign.z, 1.0); // 0.0 is considered positive
+        assert_eq!(sign.w, -1.0);
+    }
+
+    #[test]
+    fn test_component_mul() {
+        let a = Vec4::new(1.0, 2.0, 3.0, 4.0);
+        let b = Vec4::new(2.0, 3.0, 4.0, 5.0);
+        let result = a.component_mul(b);
+        assert_eq!(result, Vec4::new(2.0, 6.0, 12.0, 20.0));
     }
 }

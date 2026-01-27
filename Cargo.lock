@@ -1478,6 +1478,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust4d_physics"
+version = "0.1.0"
+dependencies = [
+ "rust4d_math",
+]
+
+[[package]]
 name = "rust4d_render"
 version = "0.1.0"
 dependencies = [

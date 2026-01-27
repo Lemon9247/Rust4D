@@ -5,6 +5,7 @@ members = [
     "crates/rust4d_core",
     "crates/rust4d_render",
     "crates/rust4d_input",
+    "crates/rust4d_physics",
 ]
 
 [workspace.dependencies]
@@ -20,6 +21,7 @@ rust4d_math = { path = "crates/rust4d_math" }
 rust4d_core = { path = "crates/rust4d_core" }
 rust4d_render = { path = "crates/rust4d_render" }
 rust4d_input = { path = "crates/rust4d_input" }
+rust4d_physics = { path = "crates/rust4d_physics" }
 
 [package]
 name = "rust4d"
