@@ -1,11 +1,12 @@
 //! 4D Vector type
 
 use bytemuck::{Pod, Zeroable};
+use serde::{Serialize, Deserialize};
 
 /// 4D Vector with x, y, z, w components
 /// The w component represents the 4th spatial dimension (ana/kata)
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable, Serialize, Deserialize)]
 pub struct Vec4 {
     pub x: f32,
     pub y: f32,
