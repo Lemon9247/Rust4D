@@ -103,6 +103,17 @@ This project is written in Rust. Use `cargo` for building, testing, and running.
 
 5) When all subagents finish, Claude should synthesise their reports into a final summary report, which should be a separate markdown file.
 
+6) **Swarm status display:** After launching agents, display a status table showing all agents and their current state:
+   ```
+   | Agent | Focus | Status |
+   |-------|-------|--------|
+   | Documentation Agent | READMEs, docs | Running |
+   | Architecture Agent | main.rs structure | Complete |
+   ```
+   Then wait for agents to complete rather than doing other work. Update the table as agents finish. Use the task list (TaskCreate/TaskUpdate) to track agent progress - create a task for each agent so progress is visible in the UI.
+
+7) **Don't interrupt running agents:** Once agents are launched, avoid starting new unrelated work. Wait for notifications that agents have completed, then synthesize their results.
+
 Use the `/swarm` skill to initiate multi-agent tasks.
 
 # Skills
