@@ -11,12 +11,15 @@ use winit::{
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
-use rust4d_render::context::RenderContext;
-use rust4d_render::camera4d::Camera4D;
-use rust4d_render::geometry::{Tesseract, Hyperplane};
-use rust4d_render::pipeline::{
-    SlicePipeline, RenderPipeline, SliceParams, RenderUniforms,
-    Vertex4D, GpuTetrahedron, perspective_matrix,
+use rust4d_core::{
+    World, Entity, ShapeRef, Material,
+    Tesseract4D, Hyperplane4D,
+};
+use rust4d_render::{
+    context::RenderContext,
+    camera4d::Camera4D,
+    pipeline::{SlicePipeline, RenderPipeline, SliceParams, RenderUniforms, perspective_matrix},
+    RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
 
@@ -26,8 +29,10 @@ struct App {
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
     render_pipeline: Option<RenderPipeline>,
-    vertices: Vec<Vertex4D>,
-    tetrahedra: Vec<GpuTetrahedron>,
+    /// The 4D world containing all entities
+    world: World,
+    /// Cached GPU geometry (rebuilt when world changes)
+    geometry: RenderableGeometry,
     camera: Camera4D,
     controller: CameraController,
     last_frame: std::time::Instant,
@@ -36,29 +41,37 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        // Create tesseract geometry
-        let mut tesseract = Tesseract::new(2.0);
-        let (mut vertices, mut tetrahedra) = Self::tesseract_to_tetrahedra(&mut tesseract);
+        // Create the world
+        let mut world = World::with_capacity(2);
 
-        // Create checkerboard hyperplane below the tesseract
-        // y=-2.0 (below tesseract), size=10 (extends from -10 to +10 in XZ),
-        // 10x10 grid, cell_size=2.0 for checkerboard, w_extent=5.0, tiny thickness
-        let hyperplane = Hyperplane::new(-2.0, 10.0, 10, 2.0, 5.0, 0.001);
-        let (plane_vertices, plane_tetrahedra) = Self::hyperplane_to_tetrahedra(&hyperplane, vertices.len());
+        // Add tesseract entity with position-based gradient coloring
+        let tesseract = Tesseract4D::new(2.0);
+        world.add_entity(Entity::with_material(
+            ShapeRef::shared(tesseract),
+            Material::WHITE, // Will be overridden by position gradient
+        ));
 
-        // Combine geometry
-        vertices.extend(plane_vertices);
-        tetrahedra.extend(plane_tetrahedra);
+        // Add checkerboard floor entity
+        let floor = Hyperplane4D::new(-2.0, 10.0, 10, 5.0, 0.001);
+        world.add_entity(Entity::with_material(
+            ShapeRef::shared(floor),
+            Material::GRAY, // Will be overridden by checkerboard
+        ));
 
-        log::info!("Total geometry: {} vertices, {} tetrahedra", vertices.len(), tetrahedra.len());
+        // Build GPU geometry from the world
+        let geometry = Self::build_geometry(&world);
+
+        log::info!("World created with {} entities", world.entity_count());
+        log::info!("Total geometry: {} vertices, {} tetrahedra",
+            geometry.vertex_count(), geometry.tetrahedron_count());
 
         Self {
             window: None,
             render_context: None,
             slice_pipeline: None,
             render_pipeline: None,
-            vertices,
-            tetrahedra,
+            world,
+            geometry,
             camera: Camera4D::new(),
             controller: CameraController::new(),
             last_frame: std::time::Instant::now(),
@@ -66,60 +79,30 @@ impl App {
         }
     }
 
-    /// Convert tesseract geometry to GPU vertices and tetrahedra
-    fn tesseract_to_tetrahedra(tesseract: &mut Tesseract) -> (Vec<Vertex4D>, Vec<GpuTetrahedron>) {
-        // Convert tesseract vertices to GPU format with colors
-        let vertices: Vec<Vertex4D> = tesseract.vertices.iter().enumerate().map(|(_i, v)| {
-            // Color based on vertex position - creates visual gradient
-            let color = [
-                (v.x + 1.0) / 2.0, // Red from x
-                (v.y + 1.0) / 2.0, // Green from y
-                (v.z + 1.0) / 2.0, // Blue from z
-                1.0,
-            ];
-            Vertex4D::new([v.x, v.y, v.z, v.w], color)
-        }).collect();
+    /// Build GPU geometry from the world using custom coloring
+    fn build_geometry(world: &World) -> RenderableGeometry {
+        let mut geometry = RenderableGeometry::new();
 
-        // Get tetrahedra decomposition
-        let tetrahedra: Vec<GpuTetrahedron> = tesseract.tetrahedra().iter().map(|tet| {
-            GpuTetrahedron::from_indices([
-                tet.vertices[0] as u32,
-                tet.vertices[1] as u32,
-                tet.vertices[2] as u32,
-                tet.vertices[3] as u32,
-            ])
-        }).collect();
+        // Checkerboard pattern for the floor
+        let checkerboard = CheckerboardGeometry::new(
+            [0.3, 0.3, 0.35, 1.0], // Dark gray
+            [0.7, 0.7, 0.75, 1.0], // Light gray
+            2.0, // Cell size
+        );
 
-        log::info!("Generated {} vertices and {} tetrahedra from tesseract",
-            vertices.len(), tetrahedra.len());
+        for (idx, entity) in world.iter().enumerate() {
+            if idx == 0 {
+                // Tesseract: use position gradient
+                geometry.add_entity_with_color(entity, &position_gradient_color);
+            } else {
+                // Floor: use checkerboard pattern
+                geometry.add_entity_with_color(entity, &|v, _m| {
+                    checkerboard.color_for_position(v.x, v.z)
+                });
+            }
+        }
 
-        (vertices, tetrahedra)
-    }
-
-    /// Convert hyperplane geometry to GPU vertices and tetrahedra
-    fn hyperplane_to_tetrahedra(hyperplane: &Hyperplane, vertex_offset: usize) -> (Vec<Vertex4D>, Vec<GpuTetrahedron>) {
-        // Convert hyperplane vertices to GPU format with pre-computed colors
-        let vertices: Vec<Vertex4D> = hyperplane.vertices.iter()
-            .zip(hyperplane.colors.iter())
-            .map(|(v, color)| {
-                Vertex4D::new([v.x, v.y, v.z, v.w], *color)
-            })
-            .collect();
-
-        // Convert tetrahedra with offset for combined vertex buffer
-        let tetrahedra: Vec<GpuTetrahedron> = hyperplane.tetrahedra.iter().map(|tet| {
-            GpuTetrahedron::from_indices([
-                (tet.vertices[0] + vertex_offset) as u32,
-                (tet.vertices[1] + vertex_offset) as u32,
-                (tet.vertices[2] + vertex_offset) as u32,
-                (tet.vertices[3] + vertex_offset) as u32,
-            ])
-        }).collect();
-
-        log::info!("Generated {} vertices and {} tetrahedra from hyperplane",
-            vertices.len(), tetrahedra.len());
-
-        (vertices, tetrahedra)
+        geometry
     }
 
     /// Capture cursor for FPS-style controls
@@ -180,11 +163,15 @@ impl ApplicationHandler for App {
                 render_context.size.height,
             );
 
-            // Upload tesseract geometry (tetrahedra mode)
-            slice_pipeline.upload_tetrahedra(&render_context.device, &self.vertices, &self.tetrahedra);
+            // Upload geometry
+            slice_pipeline.upload_tetrahedra(
+                &render_context.device,
+                &self.geometry.vertices,
+                &self.geometry.tetrahedra,
+            );
 
-            log::info!("Loaded {} vertices and {} tetrahedra from tesseract",
-                self.vertices.len(), self.tetrahedra.len());
+            log::info!("Loaded {} vertices and {} tetrahedra",
+                self.geometry.vertex_count(), self.geometry.tetrahedron_count());
 
             self.window = Some(window);
             self.render_context = Some(render_context);
@@ -277,6 +264,9 @@ impl ApplicationHandler for App {
                 let dt = (now - self.last_frame).as_secs_f32();
                 self.last_frame = now;
 
+                // Update world (future: physics)
+                self.world.update(dt);
+
                 // Update camera
                 let _pos = self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
@@ -312,7 +302,7 @@ impl ApplicationHandler for App {
                     let camera_matrix = self.camera.rotation_matrix();
                     let slice_params = SliceParams {
                         slice_w: self.camera.get_slice_w(),
-                        tetrahedron_count: self.tetrahedra.len() as u32,
+                        tetrahedron_count: self.geometry.tetrahedron_count() as u32,
                         _padding: [0.0; 2],
                         camera_matrix,
                         camera_eye: eye_3d,
