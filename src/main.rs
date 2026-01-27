@@ -299,7 +299,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 // Calculate delta time
                 let now = std::time::Instant::now();
-                let dt = (now - self.last_frame).as_secs_f32();
+                let raw_dt = (now - self.last_frame).as_secs_f32();
+                // Cap dt to prevent huge physics steps on first frame or after window focus
+                let dt = raw_dt.min(1.0 / 30.0); // Max 33ms per frame
                 self.last_frame = now;
 
                 // === PHYSICS-BASED GAME LOOP ===
