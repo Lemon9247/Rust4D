@@ -2,6 +2,7 @@
 //!
 //! A 4D rendering engine that displays 3D cross-sections of 4D geometry.
 
+mod config;
 mod scene;
 
 use std::sync::Arc;
