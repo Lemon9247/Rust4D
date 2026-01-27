@@ -4,17 +4,16 @@
 
 use crate::Entity;
 use rust4d_physics::{PhysicsConfig, PhysicsWorld};
+use slotmap::{new_key_type, SlotMap};
 
-/// A handle to an entity in the world
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EntityHandle(usize);
-
-impl EntityHandle {
-    /// Get the raw index of this handle
-    #[inline]
-    pub fn index(&self) -> usize {
-        self.0
-    }
+// Define generational key type for entities
+new_key_type! {
+    /// Key to an entity in the world
+    ///
+    /// Uses generational indexing to prevent the ABA problem where a key
+    /// could point to a reused slot. If an entity is removed and its slot reused,
+    /// old keys will return None instead of pointing to the wrong entity.
+    pub struct EntityKey;
 }
 
 /// The 4D world containing all entities
@@ -22,8 +21,8 @@ impl EntityHandle {
 /// The World is the central container for all game objects.
 /// It manages entities and integrates with physics simulation.
 pub struct World {
-    /// All entities in the world
-    entities: Vec<Entity>,
+    /// All entities in the world (using generational keys)
+    entities: SlotMap<EntityKey, Entity>,
     /// Optional physics simulation (None = no physics)
     physics_world: Option<PhysicsWorld>,
 }
@@ -38,7 +37,7 @@ impl World {
     /// Create a new empty world
     pub fn new() -> Self {
         Self {
-            entities: Vec::new(),
+            entities: SlotMap::with_key(),
             physics_world: None,
         }
     }
@@ -46,7 +45,7 @@ impl World {
     /// Create a world with pre-allocated capacity for entities
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            entities: Vec::with_capacity(capacity),
+            entities: SlotMap::with_capacity_and_key(capacity),
             physics_world: None,
         }
     }
@@ -67,31 +66,24 @@ impl World {
         self.physics_world.as_mut()
     }
 
-    /// Add an entity to the world, returning its handle
-    pub fn add_entity(&mut self, entity: Entity) -> EntityHandle {
-        let handle = EntityHandle(self.entities.len());
-        self.entities.push(entity);
-        handle
+    /// Add an entity to the world, returning its key
+    pub fn add_entity(&mut self, entity: Entity) -> EntityKey {
+        self.entities.insert(entity)
     }
 
-    /// Get a reference to an entity by handle
-    pub fn get_entity(&self, handle: EntityHandle) -> Option<&Entity> {
-        self.entities.get(handle.0)
+    /// Remove an entity from the world and return it
+    pub fn remove_entity(&mut self, key: EntityKey) -> Option<Entity> {
+        self.entities.remove(key)
     }
 
-    /// Get a mutable reference to an entity by handle
-    pub fn get_entity_mut(&mut self, handle: EntityHandle) -> Option<&mut Entity> {
-        self.entities.get_mut(handle.0)
+    /// Get a reference to an entity by key
+    pub fn get_entity(&self, key: EntityKey) -> Option<&Entity> {
+        self.entities.get(key)
     }
 
-    /// Get all entities as a slice
-    pub fn entities(&self) -> &[Entity] {
-        &self.entities
-    }
-
-    /// Get all entities as a mutable slice
-    pub fn entities_mut(&mut self) -> &mut [Entity] {
-        &mut self.entities
+    /// Get a mutable reference to an entity by key
+    pub fn get_entity_mut(&mut self, key: EntityKey) -> Option<&mut Entity> {
+        self.entities.get_mut(key)
     }
 
     /// Get the number of entities
@@ -104,6 +96,11 @@ impl World {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
+    }
+
+    /// Iterate over all entity keys
+    pub fn entity_keys(&self) -> impl Iterator<Item = EntityKey> + '_ {
+        self.entities.keys()
     }
 
     /// Update the world by stepping physics and syncing entity transforms
@@ -119,9 +116,9 @@ impl World {
 
         // Sync entity transforms from their physics bodies
         if let Some(ref physics) = self.physics_world {
-            for entity in &mut self.entities {
-                if let Some(body_handle) = entity.physics_body {
-                    if let Some(body) = physics.get_body(body_handle) {
+            for (_key, entity) in &mut self.entities {
+                if let Some(body_key) = entity.physics_body {
+                    if let Some(body) = physics.get_body(body_key) {
                         entity.transform.position = body.position;
                     }
                 }
@@ -136,20 +133,17 @@ impl World {
 
     /// Iterate over all entities
     pub fn iter(&self) -> impl Iterator<Item = &Entity> {
-        self.entities.iter()
+        self.entities.values()
     }
 
     /// Iterate over all entities mutably
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Entity> {
-        self.entities.iter_mut()
+        self.entities.values_mut()
     }
 
-    /// Iterate over handles and entities
-    pub fn iter_with_handles(&self) -> impl Iterator<Item = (EntityHandle, &Entity)> {
-        self.entities
-            .iter()
-            .enumerate()
-            .map(|(i, e)| (EntityHandle(i), e))
+    /// Iterate over keys and entities
+    pub fn iter_with_keys(&self) -> impl Iterator<Item = (EntityKey, &Entity)> {
+        self.entities.iter()
     }
 }
 
@@ -175,9 +169,10 @@ mod tests {
     fn test_world_add_entity() {
         let mut world = World::new();
         let entity = make_test_entity();
-        let handle = world.add_entity(entity);
+        let key = world.add_entity(entity);
 
-        assert_eq!(handle.index(), 0);
+        // Key should be valid
+        assert!(world.get_entity(key).is_some());
         assert_eq!(world.entity_count(), 1);
     }
 
@@ -207,13 +202,12 @@ mod tests {
     }
 
     #[test]
-    fn test_world_entities() {
+    fn test_world_entity_count() {
         let mut world = World::new();
         world.add_entity(make_test_entity());
         world.add_entity(make_test_entity());
 
-        let entities = world.entities();
-        assert_eq!(entities.len(), 2);
+        assert_eq!(world.entity_count(), 2);
     }
 
     #[test]
@@ -237,15 +231,16 @@ mod tests {
     }
 
     #[test]
-    fn test_world_iter_with_handles() {
+    fn test_world_iter_with_keys() {
         let mut world = World::new();
-        world.add_entity(make_test_entity());
-        world.add_entity(make_test_entity());
+        let key1 = world.add_entity(make_test_entity());
+        let key2 = world.add_entity(make_test_entity());
 
-        let handles: Vec<_> = world.iter_with_handles().map(|(h, _)| h).collect();
-        assert_eq!(handles.len(), 2);
-        assert_eq!(handles[0].index(), 0);
-        assert_eq!(handles[1].index(), 1);
+        let keys: Vec<_> = world.iter_with_keys().map(|(k, _)| k).collect();
+        assert_eq!(keys.len(), 2);
+        // Keys should contain both added keys (order may vary with SlotMap)
+        assert!(keys.contains(&key1));
+        assert!(keys.contains(&key2));
     }
 
     #[test]
@@ -271,13 +266,29 @@ mod tests {
     }
 
     #[test]
-    fn test_entity_handle() {
-        let handle = EntityHandle(42);
-        assert_eq!(handle.index(), 42);
+    fn test_stale_key_returns_none() {
+        let mut world = World::new();
+        let entity = make_test_entity();
+        let key = world.add_entity(entity);
 
-        // Test PartialEq
-        let handle2 = EntityHandle(42);
-        assert_eq!(handle, handle2);
+        // Key is valid initially
+        assert!(world.get_entity(key).is_some());
+
+        // Remove the entity
+        let removed = world.remove_entity(key);
+        assert!(removed.is_some());
+
+        // Key is now stale - should return None
+        assert!(world.get_entity(key).is_none());
+
+        // Add a new entity - it gets a different key
+        let new_entity = make_test_entity();
+        let new_key = world.add_entity(new_entity);
+
+        // Old key still returns None (generational safety)
+        assert!(world.get_entity(key).is_none());
+        // New key works
+        assert!(world.get_entity(new_key).is_some());
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use rust4d_math::ConvexShape4D;
-use rust4d_physics::BodyHandle;
+use rust4d_physics::BodyKey;
 use crate::Transform4D;
 
 /// A simple material with just a base color
@@ -90,7 +90,7 @@ impl ShapeRef {
 /// - A transform (position, rotation, scale)
 /// - A shape (the geometry)
 /// - A material (visual properties)
-/// - An optional physics body handle (links to PhysicsWorld)
+/// - An optional physics body key (links to PhysicsWorld)
 pub struct Entity {
     /// The entity's transform in world space
     pub transform: Transform4D,
@@ -98,8 +98,8 @@ pub struct Entity {
     pub shape: ShapeRef,
     /// The entity's material
     pub material: Material,
-    /// Optional physics body handle (links to PhysicsWorld)
-    pub physics_body: Option<BodyHandle>,
+    /// Optional physics body key (links to PhysicsWorld)
+    pub physics_body: Option<BodyKey>,
 }
 
 impl Entity {
@@ -134,8 +134,8 @@ impl Entity {
     }
 
     /// Attach a physics body to this entity
-    pub fn with_physics_body(mut self, handle: BodyHandle) -> Self {
-        self.physics_body = Some(handle);
+    pub fn with_physics_body(mut self, key: BodyKey) -> Self {
+        self.physics_body = Some(key);
         self
     }
 
