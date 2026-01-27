@@ -2,6 +2,8 @@
 //!
 //! A 4D rendering engine that displays 3D cross-sections of 4D geometry.
 
+mod scene;
+
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
@@ -11,11 +13,7 @@ use winit::{
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
-use rust4d_core::{
-    World, Entity, ShapeRef, Material,
-    Tesseract4D, Hyperplane4D,
-    PhysicsConfig, RigidBody4D, StaticCollider,
-};
+use rust4d_core::World;
 use rust4d_render::{
     context::RenderContext,
     camera4d::Camera4D,
@@ -23,8 +21,10 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
-use rust4d_physics::{PhysicsMaterial, BodyType};
+use rust4d_physics::PhysicsMaterial;
 use rust4d_math::Vec4;
+
+use scene::SceneBuilder;
 
 /// Main application state
 struct App {
@@ -50,59 +50,14 @@ const FLOOR_Y: f32 = -2.0;
 
 impl App {
     fn new() -> Self {
-        // Create the world with physics enabled
-        let physics_config = PhysicsConfig::new(GRAVITY);
-        let mut world = World::with_capacity(2).with_physics(physics_config);
-
-        // Add floor as a static collider (concrete: high friction, low bounce)
-        world.physics_mut().unwrap().add_static_collider(
-            StaticCollider::floor(FLOOR_Y, PhysicsMaterial::CONCRETE)
-        );
-
-        // Create tesseract physics body first
-        // Tesseract size is 2.0, so half-extents are 1.0
-        // Start it at the origin (will rest on floor at Y=-2)
-        let tesseract_start = Vec4::new(0.0, 0.0, 0.0, 0.0);
-        let tesseract_body = RigidBody4D::new_aabb(tesseract_start, Vec4::new(1.0, 1.0, 1.0, 1.0))
-            .with_gravity(true)
-            .with_mass(10.0)  // Heavy enough to feel solid
-            .with_material(PhysicsMaterial::WOOD);  // Wood-like: moderate friction, low bounce
-        let tesseract_body = world.physics_mut().unwrap().add_body(tesseract_body);
-
-        // Add tesseract entity linked to physics body
-        let tesseract = Tesseract4D::new(2.0);
-        world.add_entity(
-            Entity::with_material(
-                ShapeRef::shared(tesseract),
-                Material::WHITE, // Will be overridden by position gradient
-            )
-            .with_physics_body(tesseract_body)
-            .with_name("tesseract")
-            .with_tag("dynamic")
-        );
-
-        // Add checkerboard floor entity (no physics - it's static/infinite)
-        let floor = Hyperplane4D::new(FLOOR_Y, 10.0, 10, 5.0, 0.001);
-        world.add_entity(
-            Entity::with_material(
-                ShapeRef::shared(floor),
-                Material::GRAY, // Will be overridden by checkerboard
-            )
-            .with_name("floor")
-            .with_tag("static")
-        );
-
-        // Create player physics body - kinematic (no gravity, user-controlled)
-        // Start the player above the floor (floor at -2, player radius is 0.5)
+        // Build the scene using SceneBuilder
         let player_start = Vec4::new(0.0, 0.0, 5.0, 0.0);
-        let player = RigidBody4D::new_sphere(player_start, 0.5)
-            .with_body_type(BodyType::Kinematic)
-            .with_mass(1.0)
-            .with_material(PhysicsMaterial::WOOD);
-        let player_body = world.physics_mut().unwrap().add_body(player);
-
-        // Register as the player body for jump/grounded detection
-        world.physics_mut().unwrap().set_player_body(player_body);
+        let world = SceneBuilder::with_capacity(2)
+            .with_physics(GRAVITY)
+            .add_floor(FLOOR_Y, 10.0, PhysicsMaterial::CONCRETE)
+            .add_player(player_start, 0.5)
+            .add_tesseract(Vec4::ZERO, 2.0, "tesseract")
+            .build();
 
         // Build GPU geometry from the world
         let geometry = Self::build_geometry(&world);
