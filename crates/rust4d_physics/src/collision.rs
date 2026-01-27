@@ -559,4 +559,58 @@ mod tests {
         // Pickup doesn't collide with enemy (pickup's mask doesn't include ENEMY)
         assert!(!pickup.collides_with(&enemy));
     }
+
+    #[test]
+    fn test_tesseract_vs_bounded_floor() {
+        // Simulate the default scene: tesseract at y=0, floor at y=-2
+
+        // Floor AABB: top at y=-2, extends 100 units down, 10 units in x/z, 5 in w
+        let floor = AABB4D::from_center_half_extents(
+            Vec4::new(0.0, -52.0, 0.0, 0.0), // center at y=-52 (100/2 below -2)
+            Vec4::new(10.0, 50.0, 10.0, 5.0),
+        );
+        assert_eq!(floor.max.y, -2.0, "Floor top should be at y=-2");
+        assert_eq!(floor.min.y, -102.0, "Floor bottom should be at y=-102");
+
+        // Tesseract at starting position (y=0), half_extent=1
+        let tesseract_start = AABB4D::from_center_half_extents(
+            Vec4::ZERO,
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        );
+        // Tesseract bottom at y=-1, floor top at y=-2 → no collision
+        assert!(aabb_vs_aabb(&tesseract_start, &floor).is_none(),
+            "Tesseract at y=0 should not collide with floor at y=-2");
+
+        // Tesseract fallen to y=-0.9 (bottom at y=-1.9, still above floor at y=-2)
+        let tesseract_almost = AABB4D::from_center_half_extents(
+            Vec4::new(0.0, -0.9, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        );
+        assert!(aabb_vs_aabb(&tesseract_almost, &floor).is_none(),
+            "Tesseract at y=-0.9 should not collide (bottom at -1.9, floor top at -2)");
+
+        // Tesseract fallen to y=-1.1 (bottom at y=-2.1, penetrating floor)
+        let tesseract_touching = AABB4D::from_center_half_extents(
+            Vec4::new(0.0, -1.1, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        );
+        let contact = aabb_vs_aabb(&tesseract_touching, &floor);
+        assert!(contact.is_some(), "Tesseract at y=-1.1 should collide with floor");
+        let contact = contact.unwrap();
+        assert!(contact.penetration > 0.0, "Should have positive penetration");
+
+        // Tesseract at rest position y=-1 (bottom at y=-2, exactly on floor)
+        let tesseract_resting = AABB4D::from_center_half_extents(
+            Vec4::new(0.0, -1.0, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        );
+        // At exact boundary - may or may not register as collision
+        // Important: at y=-1.0001, should collide
+        let tesseract_slightly_in = AABB4D::from_center_half_extents(
+            Vec4::new(0.0, -1.001, 0.0, 0.0),
+            Vec4::new(1.0, 1.0, 1.0, 1.0),
+        );
+        assert!(aabb_vs_aabb(&tesseract_slightly_in, &floor).is_some(),
+            "Tesseract slightly below resting position should collide");
+    }
 }
