@@ -1,7 +1,11 @@
 //! 4D Hyperplane geometry (floor/ground plane)
 //!
 //! A hyperplane in 4D is a 3D subspace. For a "floor", we create a plane
-//! at constant Y that extends in X, Z, and W dimensions.
+//! that extends in X, Z, and W dimensions.
+//!
+//! The hyperplane is created in **local space** with the bottom surface at y=0
+//! and thickness extending upward to y=thickness. The entity transform is used
+//! to position it in world space.
 //!
 //! To be sliceable by the W-plane, the hyperplane must have extent in W.
 //! We model it as a grid of "pillars" - each pillar is a rectangular prism
@@ -10,20 +14,22 @@
 use crate::{Vec4, shape::{ConvexShape4D, Tetrahedron}};
 use std::collections::HashSet;
 
-/// A hyperplane at a fixed Y height - pure geometry without colors
+/// A hyperplane floor in local space - pure geometry without colors
+///
+/// The hyperplane is created in local space with the bottom surface at y=0
+/// and extends upward by `thickness`. Use the entity transform to position
+/// it in world space.
 ///
 /// The hyperplane extends as a grid in X and Z, with extent in W for slicing.
 #[derive(Clone)]
 pub struct Hyperplane4D {
-    /// Y level of the plane
-    y_level: f32,
     /// Half-extent in X and Z
     half_size: f32,
     /// Grid size (cells per axis)
     grid_size: usize,
     /// Half-extent in W dimension
     w_extent: f32,
-    /// Y thickness (small for thin plane)
+    /// Y thickness (bottom at y=0, top at y=thickness)
     thickness: f32,
     /// All vertices
     vertices: Vec<Vec4>,
@@ -32,16 +38,17 @@ pub struct Hyperplane4D {
 }
 
 impl Hyperplane4D {
-    /// Create a new hyperplane
+    /// Create a new hyperplane in local space
+    ///
+    /// The hyperplane is created with the bottom surface at y=0 and extends
+    /// upward by `thickness`. Use the entity transform to position it in world space.
     ///
     /// # Arguments
-    /// * `y` - The Y height of the plane (e.g., -2.0 for below the tesseract)
     /// * `size` - Half-extent in X and Z (total size is 2*size)
     /// * `grid_size` - Number of cells along each axis
     /// * `w_extent` - Half-extent in W dimension (for slicing visibility)
-    /// * `thickness` - Small Y thickness for proper 4D volume
+    /// * `thickness` - Y thickness (bottom at y=0, top at y=thickness)
     pub fn new(
-        y: f32,
         size: f32,
         grid_size: usize,
         w_extent: f32,
@@ -63,8 +70,9 @@ impl Hyperplane4D {
 
                 let base_idx = vertices.len();
 
-                let y0 = y;
-                let y1 = y + thickness;
+                // Local space: bottom at y=0, top at y=thickness
+                let y0 = 0.0;
+                let y1 = thickness;
                 let w0 = -w_extent;
                 let w1 = w_extent;
 
@@ -94,7 +102,6 @@ impl Hyperplane4D {
         }
 
         Self {
-            y_level: y,
             half_size: size,
             grid_size,
             w_extent,
@@ -102,12 +109,6 @@ impl Hyperplane4D {
             vertices,
             tetrahedra,
         }
-    }
-
-    /// Get the Y level of the plane
-    #[inline]
-    pub fn y_level(&self) -> f32 {
-        self.y_level
     }
 
     /// Get the half-size in X and Z
@@ -207,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_hyperplane_creation() {
-        let plane = Hyperplane4D::new(-2.0, 4.0, 4, 2.0, 0.01);
+        let plane = Hyperplane4D::new(4.0, 4, 2.0, 0.01);
 
         // 4x4 grid = 16 cells, each with 16 vertices
         assert_eq!(plane.vertices().len(), 16 * 16);
@@ -215,19 +216,19 @@ mod tests {
     }
 
     #[test]
-    fn test_hyperplane_vertex_positions() {
-        let plane = Hyperplane4D::new(-2.0, 4.0, 2, 2.0, 0.01);
+    fn test_hyperplane_vertex_positions_local_space() {
+        let plane = Hyperplane4D::new(4.0, 2, 2.0, 0.1);
 
-        // Check that all vertices are at y = -2.0 or slightly above
+        // Check that all vertices are in local space: y=0 to y=thickness
         for v in plane.vertices() {
-            assert!(v.y >= -2.0 && v.y <= -1.99,
-                "Vertex Y should be near -2.0, got {}", v.y);
+            assert!(v.y >= 0.0 && v.y <= 0.1,
+                "Vertex Y should be between 0 and thickness, got {}", v.y);
         }
     }
 
     #[test]
     fn test_hyperplane_cell_coords() {
-        let plane = Hyperplane4D::new(-2.0, 4.0, 4, 2.0, 0.01);
+        let plane = Hyperplane4D::new(4.0, 4, 2.0, 0.01);
 
         assert_eq!(plane.cell_coords(0), (0, 0));
         assert_eq!(plane.cell_coords(1), (0, 1));
@@ -237,9 +238,8 @@ mod tests {
 
     #[test]
     fn test_hyperplane_accessors() {
-        let plane = Hyperplane4D::new(-2.0, 4.0, 4, 2.0, 0.01);
+        let plane = Hyperplane4D::new(4.0, 4, 2.0, 0.01);
 
-        assert_eq!(plane.y_level(), -2.0);
         assert_eq!(plane.half_size(), 4.0);
         assert_eq!(plane.grid_size(), 4);
         assert_eq!(plane.w_extent(), 2.0);
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_hyperplane_implements_convex_shape() {
-        let plane = Hyperplane4D::new(-2.0, 4.0, 2, 2.0, 0.01);
+        let plane = Hyperplane4D::new(4.0, 2, 2.0, 0.01);
 
         assert_eq!(plane.vertex_count(), 4 * 16); // 4 cells * 16 verts
         assert!(plane.tetrahedron_count() > 0);
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_hyperplane_clone() {
-        let p1 = Hyperplane4D::new(-2.0, 4.0, 2, 2.0, 0.01);
+        let p1 = Hyperplane4D::new(4.0, 2, 2.0, 0.01);
         let p2 = p1.clone();
 
         assert_eq!(p1.vertices().len(), p2.vertices().len());
