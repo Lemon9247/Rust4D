@@ -249,18 +249,25 @@ impl StaticCollider {
     /// - `y`: Y height of floor surface (top of AABB)
     /// - `half_size_xz`: Half-extent in X and Z dimensions
     /// - `half_size_w`: Half-extent in W dimension
-    /// - `thickness`: Thickness in Y (minimum 0.1 enforced to prevent tunneling)
+    /// - `thickness`: Thickness in Y (minimum 100.0 enforced to prevent tunneling)
     /// - `material`: Physics material for friction and restitution
+    ///
+    /// # Anti-tunneling
+    /// The floor extends 100 units downward by default to prevent fast-moving objects
+    /// from passing through. The thickness parameter is ignored in favor of this
+    /// large value to ensure reliable collision detection.
     pub fn floor_bounded(
         y: f32,
         half_size_xz: f32,
         half_size_w: f32,
-        thickness: f32,
+        _thickness: f32, // Ignored - using fixed large thickness for anti-tunneling
         material: PhysicsMaterial,
     ) -> Self {
         use crate::shapes::AABB4D;
 
-        let actual_thickness = thickness.max(0.1);
+        // Use a large thickness to prevent tunneling
+        // Objects falling at high speeds won't skip through this
+        let actual_thickness = 100.0;
         let half_thickness = actual_thickness / 2.0;
 
         // Position AABB so top surface is at y
@@ -454,7 +461,7 @@ mod tests {
             0.0,   // y: floor surface at y=0
             10.0,  // half_size_xz
             5.0,   // half_size_w
-            1.0,   // thickness
+            1.0,   // thickness (ignored - uses 100.0 for anti-tunneling)
             PhysicsMaterial::CONCRETE,
         );
 
@@ -463,8 +470,8 @@ mod tests {
             Collider::AABB(aabb) => {
                 // Top surface should be at y=0
                 assert_eq!(aabb.max.y, 0.0);
-                // Bottom should be at y=-1.0 (thickness=1.0)
-                assert_eq!(aabb.min.y, -1.0);
+                // Bottom extends 100 units down for anti-tunneling
+                assert_eq!(aabb.min.y, -100.0);
                 // X/Z extents should be -10 to +10
                 assert_eq!(aabb.min.x, -10.0);
                 assert_eq!(aabb.max.x, 10.0);
@@ -481,14 +488,14 @@ mod tests {
     }
 
     #[test]
-    fn test_floor_bounded_minimum_thickness() {
+    fn test_floor_bounded_anti_tunneling() {
         use crate::shapes::Collider;
-        // Thickness below 0.1 should be clamped to 0.1
+        // Even with thin specified thickness, uses 100.0 for anti-tunneling
         let collider = StaticCollider::floor_bounded(
             5.0,   // y: floor surface at y=5
             1.0,   // half_size_xz
             1.0,   // half_size_w
-            0.01,  // thickness (too thin, should be clamped to 0.1)
+            0.01,  // thickness (ignored - uses 100.0)
             PhysicsMaterial::RUBBER,
         );
 
@@ -496,10 +503,57 @@ mod tests {
             Collider::AABB(aabb) => {
                 // Top surface at y=5
                 assert_eq!(aabb.max.y, 5.0);
-                // Bottom should be at y=4.9 (minimum thickness 0.1)
-                assert!((aabb.min.y - 4.9).abs() < 0.001);
+                // Bottom extends 100 units down for anti-tunneling
+                assert_eq!(aabb.min.y, -95.0);
             }
             _ => panic!("Expected AABB collider"),
         }
+    }
+
+    #[test]
+    fn test_floor_bounded_collision_with_sphere() {
+        use crate::shapes::{Collider, Sphere4D};
+        use crate::collision::sphere_vs_aabb;
+
+        // Values from default.ron scene
+        let collider = StaticCollider::floor_bounded(
+            -2.0,  // y: floor surface at y=-2
+            10.0,  // half_size_xz
+            5.0,   // half_size_w
+            0.001, // thickness (ignored - uses 100.0 for anti-tunneling)
+            PhysicsMaterial::CONCRETE,
+        );
+
+        let aabb = match &collider.collider {
+            Collider::AABB(aabb) => aabb,
+            _ => panic!("Expected AABB"),
+        };
+
+        // Verify floor bounds
+        assert_eq!(aabb.max.y, -2.0, "Floor top should be at y=-2");
+        assert_eq!(aabb.min.y, -102.0, "Floor bottom should extend 100 units down");
+
+        // Player spawn at (0, 0, 5, 0) with radius 0.5
+        let player_radius = 0.5;
+
+        // Player at spawn position (above floor) - should NOT collide
+        let player_above = Sphere4D::new(Vec4::new(0.0, 0.0, 5.0, 0.0), player_radius);
+        assert!(sphere_vs_aabb(&player_above, aabb).is_none(), "Player at spawn should not collide");
+
+        // Player fallen to slightly penetrating floor (center at y = -2 + 0.5 - 0.1 = -1.6)
+        // This is 0.1 units below the tangent point
+        let player_penetrating_slight = Sphere4D::new(Vec4::new(0.0, -1.6, 5.0, 0.0), player_radius);
+        let contact = sphere_vs_aabb(&player_penetrating_slight, aabb);
+        assert!(contact.is_some(), "Player penetrating floor should collide");
+
+        // Player fallen well below floor surface - should still collide due to thick floor
+        let player_deep = Sphere4D::new(Vec4::new(0.0, -50.0, 5.0, 0.0), player_radius);
+        let contact = sphere_vs_aabb(&player_deep, aabb).expect("Should collide with thick floor");
+        assert!(contact.penetration > 0.0, "Should have penetration");
+        // Normal direction depends on sphere position within AABB - just verify collision detected
+
+        // Player outside X/Z bounds - should NOT collide (can fall off edge)
+        let player_off_edge = Sphere4D::new(Vec4::new(15.0, -1.6, 5.0, 0.0), player_radius);
+        assert!(sphere_vs_aabb(&player_off_edge, aabb).is_none(), "Player off edge should not collide");
     }
 }

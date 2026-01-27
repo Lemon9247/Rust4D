@@ -249,6 +249,8 @@ impl ActiveScene {
                 if is_static {
                     // Create bounded static collider for floor/walls (objects can fall off edges)
                     if let ShapeTemplate::Hyperplane { y, size, cell_size, thickness, .. } = &entity_template.shape {
+                        log::debug!("Adding bounded floor collider: y={}, size={}, cell_size={}, thickness={}",
+                            y, size, cell_size, thickness);
                         physics.add_static_collider(StaticCollider::floor_bounded(
                             *y,
                             *size,      // X/Z extent from hyperplane
