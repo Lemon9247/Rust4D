@@ -564,13 +564,13 @@ mod tests {
     fn test_tesseract_vs_bounded_floor() {
         // Simulate the default scene: tesseract at y=0, floor at y=-2
 
-        // Floor AABB: top at y=-2, extends 100 units down, 10 units in x/z, 5 in w
+        // Floor AABB: top at y=-2, extends 5 units down (minimum), 10 units in x/z, 5 in w
         let floor = AABB4D::from_center_half_extents(
-            Vec4::new(0.0, -52.0, 0.0, 0.0), // center at y=-52 (100/2 below -2)
-            Vec4::new(10.0, 50.0, 10.0, 5.0),
+            Vec4::new(0.0, -4.5, 0.0, 0.0), // center at y=-4.5 (5/2 below -2)
+            Vec4::new(10.0, 2.5, 10.0, 5.0),
         );
         assert_eq!(floor.max.y, -2.0, "Floor top should be at y=-2");
-        assert_eq!(floor.min.y, -102.0, "Floor bottom should be at y=-102");
+        assert_eq!(floor.min.y, -7.0, "Floor bottom should be at y=-7");
 
         // Tesseract at starting position (y=0), half_extent=1
         let tesseract_start = AABB4D::from_center_half_extents(
