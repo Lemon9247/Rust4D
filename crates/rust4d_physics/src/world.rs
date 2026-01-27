@@ -156,15 +156,29 @@ impl PhysicsWorld {
                     let correction = contact.normal * contact.penetration;
                     body.apply_correction(correction);
 
+                    // Combine body and floor materials
+                    let combined = body.material.combine(&self.floor_material);
+
                     // Handle velocity response
                     let velocity_along_normal = body.velocity.dot(contact.normal);
                     if velocity_along_normal < 0.0 {
                         // Body is moving into the floor
-                        let restitution = body.material.restitution.max(self.floor_material.restitution);
-
                         // Remove the normal component of velocity and optionally bounce
                         let normal_velocity = contact.normal * velocity_along_normal;
-                        body.velocity = body.velocity - normal_velocity * (1.0 + restitution);
+                        body.velocity = body.velocity - normal_velocity * (1.0 + combined.restitution);
+
+                        // Apply friction to horizontal (tangent) velocity
+                        // Tangent velocity = total velocity - normal component
+                        let tangent_velocity = body.velocity - contact.normal * body.velocity.dot(contact.normal);
+                        let tangent_speed = tangent_velocity.length();
+
+                        if tangent_speed > 0.0001 {
+                            // Apply friction: reduce tangent velocity based on friction coefficient
+                            // Using a simple model where friction applies a deceleration
+                            let friction_factor = 1.0 - combined.friction;
+                            body.velocity = contact.normal * body.velocity.dot(contact.normal)
+                                          + tangent_velocity * friction_factor;
+                        }
                     }
                 }
             }
@@ -286,17 +300,24 @@ impl PhysicsWorld {
             self.bodies[key_b].apply_correction(correction_b);
         }
 
-        // Handle velocity response (simple push-apart)
-        // Use the maximum restitution between the two colliding bodies
-        let restitution_a = self.bodies[key_a].material.restitution;
-        let restitution_b = self.bodies[key_b].material.restitution;
-        let restitution = restitution_a.max(restitution_b);
+        // Combine materials from both bodies
+        let combined = self.bodies[key_a].material.combine(&self.bodies[key_b].material);
 
+        // Handle velocity response with restitution
         if !is_static_a {
             let vel_along_normal = self.bodies[key_a].velocity.dot(-contact.normal);
             if vel_along_normal < 0.0 {
                 let normal_velocity = -contact.normal * vel_along_normal;
-                self.bodies[key_a].velocity = self.bodies[key_a].velocity - normal_velocity * (1.0 + restitution);
+                self.bodies[key_a].velocity = self.bodies[key_a].velocity - normal_velocity * (1.0 + combined.restitution);
+
+                // Apply friction to tangent velocity
+                let tangent_velocity = self.bodies[key_a].velocity - (-contact.normal) * self.bodies[key_a].velocity.dot(-contact.normal);
+                let tangent_speed = tangent_velocity.length();
+                if tangent_speed > 0.0001 {
+                    let friction_factor = 1.0 - combined.friction;
+                    self.bodies[key_a].velocity = (-contact.normal) * self.bodies[key_a].velocity.dot(-contact.normal)
+                                                + tangent_velocity * friction_factor;
+                }
             }
         }
 
@@ -304,7 +325,16 @@ impl PhysicsWorld {
             let vel_along_normal = self.bodies[key_b].velocity.dot(contact.normal);
             if vel_along_normal < 0.0 {
                 let normal_velocity = contact.normal * vel_along_normal;
-                self.bodies[key_b].velocity = self.bodies[key_b].velocity - normal_velocity * (1.0 + restitution);
+                self.bodies[key_b].velocity = self.bodies[key_b].velocity - normal_velocity * (1.0 + combined.restitution);
+
+                // Apply friction to tangent velocity
+                let tangent_velocity = self.bodies[key_b].velocity - contact.normal * self.bodies[key_b].velocity.dot(contact.normal);
+                let tangent_speed = tangent_velocity.length();
+                if tangent_speed > 0.0001 {
+                    let friction_factor = 1.0 - combined.friction;
+                    self.bodies[key_b].velocity = contact.normal * self.bodies[key_b].velocity.dot(contact.normal)
+                                                + tangent_velocity * friction_factor;
+                }
             }
         }
     }
@@ -459,7 +489,9 @@ mod tests {
 
     #[test]
     fn test_floor_collision_with_downward_velocity() {
-        let mut world = PhysicsWorld::new();
+        // Use a floor material with zero restitution
+        let config = PhysicsConfig::new(0.0, 0.0, 0.0);
+        let mut world = PhysicsWorld::with_config(config);
         // Sphere above floor with downward velocity
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.6, 0.0, 0.0), 0.5)
             .with_velocity(Vec4::new(0.0, -10.0, 0.0, 0.0))
@@ -568,5 +600,58 @@ mod tests {
         // Body should not have fallen (no gravity)
         assert_eq!(body.position.y, 10.0);
         assert_eq!(body.velocity.y, 0.0);
+    }
+
+    #[test]
+    fn test_friction_slows_horizontal_movement() {
+        // High friction floor (rubber)
+        let config = PhysicsConfig::default()
+            .with_floor_material(PhysicsMaterial::RUBBER);
+        let mut world = PhysicsWorld::with_config(config);
+
+        // Sphere sliding on floor with horizontal velocity
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.5, 0.0, 0.0), 0.5)
+            .with_velocity(Vec4::new(10.0, -1.0, 0.0, 0.0)) // Moving right, slightly into floor
+            .with_gravity(false);
+        let handle = world.add_body(body);
+
+        world.step(0.016);
+
+        let body = world.get_body(handle).unwrap();
+        // Horizontal velocity should be reduced by friction
+        // Rubber has friction 0.9, so velocity should be significantly reduced
+        assert!(body.velocity.x < 10.0, "Friction should slow horizontal movement");
+        assert!(body.velocity.x < 5.0, "High friction should reduce velocity significantly");
+    }
+
+    #[test]
+    fn test_ice_floor_low_friction() {
+        // Ice floor (very low friction)
+        let config = PhysicsConfig::default()
+            .with_floor_material(PhysicsMaterial::ICE);
+        let mut world = PhysicsWorld::with_config(config);
+
+        // Sphere sliding on floor with horizontal velocity
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.5, 0.0, 0.0), 0.5)
+            .with_velocity(Vec4::new(10.0, -1.0, 0.0, 0.0))
+            .with_gravity(false);
+        let handle = world.add_body(body);
+
+        world.step(0.016);
+
+        let body = world.get_body(handle).unwrap();
+        // Ice has friction 0.05, so velocity should barely change
+        // Combined friction = sqrt(0.5 * 0.05) = sqrt(0.025) ≈ 0.158
+        // friction_factor = 1 - 0.158 ≈ 0.842, so velocity ≈ 10 * 0.842 = 8.42
+        assert!(body.velocity.x > 8.0, "Ice should have minimal friction");
+    }
+
+    #[test]
+    fn test_floor_material_combine() {
+        let config = PhysicsConfig::default()
+            .with_floor_material(PhysicsMaterial::METAL);
+        let world = PhysicsWorld::with_config(config);
+
+        assert_eq!(world.floor_material, PhysicsMaterial::METAL);
     }
 }
