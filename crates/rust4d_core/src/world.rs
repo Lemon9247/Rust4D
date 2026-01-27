@@ -3,7 +3,7 @@
 //! The World manages all entities in the simulation.
 
 use std::collections::HashMap;
-use crate::Entity;
+use crate::{Entity, DirtyFlags};
 use rust4d_physics::{PhysicsConfig, PhysicsWorld};
 use slotmap::{new_key_type, SlotMap};
 
@@ -150,6 +150,7 @@ impl World {
     /// This method:
     /// 1. Steps the physics simulation (if enabled)
     /// 2. Syncs entity transforms from their associated physics bodies
+    /// 3. Marks entities as dirty when their transforms change
     pub fn update(&mut self, dt: f32) {
         // Step the physics simulation
         if let Some(ref mut physics) = self.physics_world {
@@ -161,10 +162,38 @@ impl World {
             for (_key, entity) in &mut self.entities {
                 if let Some(body_key) = entity.physics_body {
                     if let Some(body) = physics.get_body(body_key) {
-                        entity.transform.position = body.position;
+                        // Only update and mark dirty if position actually changed
+                        if entity.transform.position != body.position {
+                            entity.transform.position = body.position;
+                            entity.mark_dirty(DirtyFlags::TRANSFORM);
+                        }
                     }
                 }
             }
+        }
+    }
+
+    // --- Dirty tracking methods ---
+
+    /// Check if any entity in the world has dirty flags set
+    pub fn has_dirty_entities(&self) -> bool {
+        self.entities.values().any(|entity| entity.is_dirty())
+    }
+
+    /// Iterate over all dirty entities (entities with any dirty flags set)
+    pub fn dirty_entities(&self) -> impl Iterator<Item = (EntityKey, &Entity)> {
+        self.entities.iter().filter(|(_, entity)| entity.is_dirty())
+    }
+
+    /// Iterate over dirty entities mutably
+    pub fn dirty_entities_mut(&mut self) -> impl Iterator<Item = (EntityKey, &mut Entity)> {
+        self.entities.iter_mut().filter(|(_, entity)| entity.is_dirty())
+    }
+
+    /// Clear dirty flags on all entities
+    pub fn clear_all_dirty(&mut self) {
+        for entity in self.entities.values_mut() {
+            entity.clear_dirty();
         }
     }
 
@@ -528,5 +557,143 @@ mod tests {
         // Entity should exist but not be findable by any name
         assert!(world.get_entity(key).is_some());
         assert!(world.get_by_name("").is_none());
+    }
+
+    // --- Dirty tracking tests ---
+
+    #[test]
+    fn test_new_entities_are_dirty() {
+        let mut world = World::new();
+        let key = world.add_entity(make_test_entity());
+
+        // New entities should be dirty (DirtyFlags::ALL)
+        let entity = world.get_entity(key).unwrap();
+        assert!(entity.is_dirty());
+        assert!(world.has_dirty_entities());
+    }
+
+    #[test]
+    fn test_clear_all_dirty() {
+        let mut world = World::new();
+        world.add_entity(make_test_entity());
+        world.add_entity(make_test_entity());
+
+        // Both should be dirty initially
+        assert!(world.has_dirty_entities());
+        assert_eq!(world.dirty_entities().count(), 2);
+
+        // Clear all dirty flags
+        world.clear_all_dirty();
+
+        // None should be dirty now
+        assert!(!world.has_dirty_entities());
+        assert_eq!(world.dirty_entities().count(), 0);
+    }
+
+    #[test]
+    fn test_dirty_entities_iterator() {
+        let mut world = World::new();
+        let key1 = world.add_entity(make_test_entity());
+        let key2 = world.add_entity(make_test_entity());
+
+        // Clear dirty flags
+        world.clear_all_dirty();
+
+        // Manually mark one as dirty
+        if let Some(entity) = world.get_entity_mut(key1) {
+            entity.mark_dirty(DirtyFlags::TRANSFORM);
+        }
+
+        // Only one should be dirty
+        let dirty: Vec<_> = world.dirty_entities().collect();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].0, key1);
+
+        // The other should not be dirty
+        let entity2 = world.get_entity(key2).unwrap();
+        assert!(!entity2.is_dirty());
+    }
+
+    #[test]
+    fn test_physics_sync_marks_dirty() {
+        use rust4d_physics::RigidBody4D;
+        use rust4d_math::Vec4;
+
+        // Create a world with physics enabled (no gravity for predictable test)
+        let config = PhysicsConfig::new(0.0);
+        let mut world = World::new().with_physics(config);
+
+        // Add a physics body with horizontal velocity
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.0, 0.0, 0.0), 0.5)
+            .with_velocity(Vec4::new(10.0, 0.0, 0.0, 0.0));
+        let body_handle = world.physics_mut().unwrap().add_body(body);
+
+        // Create an entity linked to the physics body
+        let entity = make_test_entity().with_physics_body(body_handle);
+        let entity_handle = world.add_entity(entity);
+
+        // Clear dirty flags
+        world.clear_all_dirty();
+        assert!(!world.has_dirty_entities());
+
+        // Step physics - entity should move and become dirty
+        world.update(1.0);
+
+        // Entity should now be dirty
+        let entity = world.get_entity(entity_handle).unwrap();
+        assert!(entity.is_dirty());
+        assert!(entity.dirty_flags().contains(DirtyFlags::TRANSFORM));
+    }
+
+    #[test]
+    fn test_physics_sync_no_change_not_dirty() {
+        use rust4d_physics::RigidBody4D;
+        use rust4d_math::Vec4;
+
+        // Create a world with physics (no gravity, no velocity = no movement)
+        let config = PhysicsConfig::new(0.0);
+        let mut world = World::new().with_physics(config);
+
+        // Add a stationary physics body
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.0, 0.0, 0.0), 0.5);
+        let body_handle = world.physics_mut().unwrap().add_body(body);
+
+        // Create an entity linked to the physics body
+        let entity = make_test_entity().with_physics_body(body_handle);
+        let entity_handle = world.add_entity(entity);
+
+        // Clear dirty flags
+        world.clear_all_dirty();
+
+        // Step physics - no movement should occur
+        world.update(1.0);
+
+        // Entity should NOT be dirty (position didn't change)
+        let entity = world.get_entity(entity_handle).unwrap();
+        assert!(!entity.is_dirty());
+    }
+
+    #[test]
+    fn test_dirty_entities_mut() {
+        let mut world = World::new();
+        world.add_entity(make_test_entity());
+        world.add_entity(make_test_entity());
+
+        // Clear dirty flags
+        world.clear_all_dirty();
+
+        // Mark first entity dirty manually
+        for entity in world.iter_mut().take(1) {
+            entity.mark_dirty(DirtyFlags::TRANSFORM);
+        }
+
+        // Use dirty_entities_mut to clear dirty on just the dirty entities
+        for (_, entity) in world.dirty_entities_mut() {
+            entity.material = Material::RED;
+            entity.clear_dirty();
+        }
+
+        // No entities should be dirty now
+        assert!(!world.has_dirty_entities());
     }
 }
