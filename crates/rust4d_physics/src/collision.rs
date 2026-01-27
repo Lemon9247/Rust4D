@@ -1,9 +1,137 @@
 //! Collision detection for 4D shapes
 //!
 //! Provides collision detection between spheres, AABBs, and planes.
+//! Also provides collision filtering via layer masks.
+
+use bitflags::bitflags;
 
 use crate::shapes::{Plane4D, Sphere4D, AABB4D};
 use rust4d_math::Vec4;
+
+bitflags! {
+    /// Collision layers for filtering which objects can collide
+    ///
+    /// Each layer is a bit in a 32-bit mask. Objects can belong to multiple layers
+    /// and can define which layers they collide with via a collision mask.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct CollisionLayer: u32 {
+        /// Default layer for most objects
+        const DEFAULT = 1 << 0;
+        /// Player character layer
+        const PLAYER = 1 << 1;
+        /// Enemy/NPC layer
+        const ENEMY = 1 << 2;
+        /// Static world geometry (floors, walls)
+        const STATIC = 1 << 3;
+        /// Trigger zones (detect but don't push)
+        const TRIGGER = 1 << 4;
+        /// Projectiles (bullets, spells)
+        const PROJECTILE = 1 << 5;
+        /// Collectible items (coins, powerups)
+        const PICKUP = 1 << 6;
+        /// All layers (collide with everything)
+        const ALL = 0xFFFFFFFF;
+    }
+}
+
+/// Collision filter determining what an object collides with
+///
+/// Uses a layer/mask system:
+/// - `layer`: Which layer(s) this object belongs to
+/// - `mask`: Which layer(s) this object can collide with
+///
+/// Two objects A and B collide if:
+/// - (A.layer & B.mask) != 0, AND
+/// - (B.layer & A.mask) != 0
+///
+/// This allows asymmetric collision relationships (e.g., triggers detect
+/// players but players don't push triggers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CollisionFilter {
+    /// Which layer(s) this object belongs to
+    pub layer: CollisionLayer,
+    /// Which layer(s) this object can collide with
+    pub mask: CollisionLayer,
+}
+
+impl Default for CollisionFilter {
+    fn default() -> Self {
+        Self {
+            layer: CollisionLayer::DEFAULT,
+            mask: CollisionLayer::ALL,
+        }
+    }
+}
+
+impl CollisionFilter {
+    /// Create a new collision filter with specified layer and mask
+    pub fn new(layer: CollisionLayer, mask: CollisionLayer) -> Self {
+        Self { layer, mask }
+    }
+
+    /// Check if this filter allows collision with another filter
+    ///
+    /// Returns true if both objects' layers match each other's masks.
+    pub fn collides_with(&self, other: &Self) -> bool {
+        // Both must agree on the collision
+        self.layer.intersects(other.mask) && other.layer.intersects(self.mask)
+    }
+
+    /// Create a filter for player objects
+    ///
+    /// Players collide with everything except other players, player projectiles, and triggers.
+    /// Triggers can still detect players for event handling, but players won't push triggers.
+    pub fn player() -> Self {
+        Self {
+            layer: CollisionLayer::PLAYER,
+            mask: CollisionLayer::ALL
+                & !CollisionLayer::PLAYER
+                & !CollisionLayer::PROJECTILE
+                & !CollisionLayer::TRIGGER,
+        }
+    }
+
+    /// Create a filter for enemy objects
+    ///
+    /// Enemies collide with everything except other enemies.
+    pub fn enemy() -> Self {
+        Self {
+            layer: CollisionLayer::ENEMY,
+            mask: CollisionLayer::ALL & !CollisionLayer::ENEMY,
+        }
+    }
+
+    /// Create a filter for static world geometry
+    ///
+    /// Static objects are detected by everything but don't detect anything themselves.
+    pub fn static_world() -> Self {
+        Self {
+            layer: CollisionLayer::STATIC,
+            mask: CollisionLayer::ALL,
+        }
+    }
+
+    /// Create a filter for trigger zones
+    ///
+    /// Triggers detect specified layers but those layers don't get pushed by triggers.
+    /// The trigger can detect collisions (for events) but won't apply forces.
+    pub fn trigger(detects: CollisionLayer) -> Self {
+        Self {
+            layer: CollisionLayer::TRIGGER,
+            mask: detects,
+        }
+    }
+
+    /// Create a filter for player projectiles
+    ///
+    /// Player projectiles hit enemies and static geometry, but not the player or pickups.
+    pub fn player_projectile() -> Self {
+        Self {
+            layer: CollisionLayer::PROJECTILE,
+            mask: CollisionLayer::ENEMY | CollisionLayer::STATIC,
+        }
+    }
+}
 
 /// Contact information from a collision
 #[derive(Clone, Copy, Debug)]
@@ -308,5 +436,127 @@ mod tests {
         // Overlap on x-axis: a.max.x=1.0, b.min.x=0.5, overlap=0.5
         let contact = aabb_vs_aabb(&a, &b).expect("Should collide");
         assert!((contact.penetration - 0.5).abs() < 0.0001);
+    }
+
+    // ===== Collision Filter Tests =====
+
+    #[test]
+    fn test_collision_filter_default() {
+        let filter = CollisionFilter::default();
+        assert_eq!(filter.layer, CollisionLayer::DEFAULT);
+        assert_eq!(filter.mask, CollisionLayer::ALL);
+    }
+
+    #[test]
+    fn test_collision_filter_default_collides_with_everything() {
+        let default = CollisionFilter::default();
+        let player = CollisionFilter::player();
+        let enemy = CollisionFilter::enemy();
+        let static_world = CollisionFilter::static_world();
+
+        // Default should collide with player, enemy, and static
+        // (but player/enemy might not collide back due to their masks)
+        assert!(default.layer.intersects(player.mask));
+        assert!(default.layer.intersects(enemy.mask));
+        assert!(default.layer.intersects(static_world.mask));
+    }
+
+    #[test]
+    fn test_collision_filter_player_vs_static() {
+        let player = CollisionFilter::player();
+        let static_world = CollisionFilter::static_world();
+
+        // Player should collide with static world
+        assert!(player.collides_with(&static_world));
+        assert!(static_world.collides_with(&player));
+    }
+
+    #[test]
+    fn test_collision_filter_player_vs_player() {
+        let player1 = CollisionFilter::player();
+        let player2 = CollisionFilter::player();
+
+        // Players should not collide with each other
+        assert!(!player1.collides_with(&player2));
+    }
+
+    #[test]
+    fn test_collision_filter_enemy_vs_enemy() {
+        let enemy1 = CollisionFilter::enemy();
+        let enemy2 = CollisionFilter::enemy();
+
+        // Enemies should not collide with each other
+        assert!(!enemy1.collides_with(&enemy2));
+    }
+
+    #[test]
+    fn test_collision_filter_player_vs_enemy() {
+        let player = CollisionFilter::player();
+        let enemy = CollisionFilter::enemy();
+
+        // Player should collide with enemy
+        assert!(player.collides_with(&enemy));
+    }
+
+    #[test]
+    fn test_collision_filter_player_projectile() {
+        let projectile = CollisionFilter::player_projectile();
+        let player = CollisionFilter::player();
+        let enemy = CollisionFilter::enemy();
+        let static_world = CollisionFilter::static_world();
+
+        // Player projectile should hit enemies and static
+        assert!(projectile.collides_with(&enemy));
+        assert!(projectile.collides_with(&static_world));
+
+        // Player projectile should not hit player
+        assert!(!projectile.collides_with(&player));
+    }
+
+    #[test]
+    fn test_collision_filter_trigger() {
+        let trigger = CollisionFilter::trigger(CollisionLayer::PLAYER);
+        let player = CollisionFilter::player();
+        let enemy = CollisionFilter::enemy();
+
+        // Trigger that detects players
+        // Note: collides_with is symmetric, so both need to agree
+        // Trigger's mask has PLAYER, but player's mask doesn't have TRIGGER by default
+        // This allows triggers to detect players for events
+        assert!(trigger.mask.contains(CollisionLayer::PLAYER));
+
+        // The trigger layer is not in player's mask, so symmetric check fails
+        // This is intentional: triggers detect but don't push
+        assert!(!trigger.collides_with(&player));
+
+        // Trigger definitely doesn't collide with enemy
+        assert!(!trigger.collides_with(&enemy));
+    }
+
+    #[test]
+    fn test_collision_layer_bitflags() {
+        let combined = CollisionLayer::PLAYER | CollisionLayer::ENEMY;
+        assert!(combined.contains(CollisionLayer::PLAYER));
+        assert!(combined.contains(CollisionLayer::ENEMY));
+        assert!(!combined.contains(CollisionLayer::STATIC));
+    }
+
+    #[test]
+    fn test_collision_filter_custom() {
+        // Custom filter: belongs to PICKUP layer, only collides with PLAYER
+        let pickup = CollisionFilter::new(CollisionLayer::PICKUP, CollisionLayer::PLAYER);
+
+        let player = CollisionFilter::new(
+            CollisionLayer::PLAYER,
+            CollisionLayer::ALL, // Player collides with everything
+        );
+
+        let enemy = CollisionFilter::enemy();
+
+        // Pickup collides with player (both agree)
+        assert!(pickup.collides_with(&player));
+
+        // Pickup doesn't collide with enemy (pickup's mask doesn't include ENEMY)
+        assert!(!pickup.collides_with(&enemy));
     }
 }

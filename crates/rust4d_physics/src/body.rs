@@ -1,5 +1,6 @@
 //! Rigid body types for 4D physics simulation
 
+use crate::collision::CollisionFilter;
 use crate::material::PhysicsMaterial;
 use crate::shapes::{Collider, Plane4D};
 use rust4d_math::Vec4;
@@ -15,6 +16,18 @@ new_key_type! {
     pub struct BodyKey;
 }
 
+/// Type of rigid body that determines how it's simulated
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BodyType {
+    /// Full physics simulation with gravity and collision response
+    #[default]
+    Dynamic,
+    /// Never moves, used for floors, walls, platforms
+    Static,
+    /// User-controlled velocity, no gravity (ideal for player characters)
+    Kinematic,
+}
+
 /// A 4D rigid body with position, velocity, and collision shape
 #[derive(Clone, Debug)]
 pub struct RigidBody4D {
@@ -26,14 +39,37 @@ pub struct RigidBody4D {
     pub mass: f32,
     /// Physical material properties (friction and restitution)
     pub material: PhysicsMaterial,
-    /// Whether this body is affected by gravity
-    pub affected_by_gravity: bool,
     /// The collision shape for this body (stores absolute world position)
     pub collider: Collider,
-    /// Whether this body is static (static bodies don't move)
-    pub is_static: bool,
+    /// Type of body (Dynamic, Static, or Kinematic)
+    pub body_type: BodyType,
+    /// Whether this body is touching the ground (set by physics step)
+    pub grounded: bool,
+    /// Collision filter (layer membership and collision mask)
+    pub filter: CollisionFilter,
 }
 
+impl RigidBody4D {
+    /// Check if this body is affected by gravity
+    #[inline]
+    pub fn affected_by_gravity(&self) -> bool {
+        self.body_type == BodyType::Dynamic
+    }
+
+    /// Check if this body is static (never moves)
+    #[inline]
+    pub fn is_static(&self) -> bool {
+        self.body_type == BodyType::Static
+    }
+
+    /// Check if this body is kinematic (user-controlled, no gravity)
+    #[inline]
+    pub fn is_kinematic(&self) -> bool {
+        self.body_type == BodyType::Kinematic
+    }
+}
+
+// Additional RigidBody4D constructors and builder methods
 impl RigidBody4D {
     /// Create a new rigid body with a sphere collider
     pub fn new_sphere(position: Vec4, radius: f32) -> Self {
@@ -43,9 +79,10 @@ impl RigidBody4D {
             velocity: Vec4::ZERO,
             mass: 1.0,
             material: PhysicsMaterial::default(),
-            affected_by_gravity: true,
             collider: Collider::Sphere(Sphere4D::new(position, radius)),
-            is_static: false,
+            body_type: BodyType::Dynamic,
+            grounded: false,
+            filter: CollisionFilter::default(),
         }
     }
 
@@ -57,18 +94,16 @@ impl RigidBody4D {
             velocity: Vec4::ZERO,
             mass: 1.0,
             material: PhysicsMaterial::default(),
-            affected_by_gravity: true,
             collider: Collider::AABB(AABB4D::from_center_half_extents(position, half_extents)),
-            is_static: false,
+            body_type: BodyType::Dynamic,
+            grounded: false,
+            filter: CollisionFilter::default(),
         }
     }
 
     /// Create a static body that doesn't move
     pub fn new_static_aabb(position: Vec4, half_extents: Vec4) -> Self {
-        let mut body = Self::new_aabb(position, half_extents);
-        body.is_static = true;
-        body.affected_by_gravity = false;
-        body
+        Self::new_aabb(position, half_extents).with_body_type(BodyType::Static)
     }
 
     /// Set the velocity of this body
@@ -98,18 +133,54 @@ impl RigidBody4D {
         self
     }
 
-    /// Set whether this body is affected by gravity
-    pub fn with_gravity(mut self, affected: bool) -> Self {
-        self.affected_by_gravity = affected;
+    /// Set the body type (Dynamic, Static, or Kinematic)
+    pub fn with_body_type(mut self, body_type: BodyType) -> Self {
+        self.body_type = body_type;
         self
     }
 
-    /// Set whether this body is static
-    pub fn with_static(mut self, is_static: bool) -> Self {
-        self.is_static = is_static;
-        if is_static {
-            self.affected_by_gravity = false;
+    /// Set whether this body is affected by gravity (legacy API)
+    ///
+    /// Sets body_type to Dynamic if gravity is enabled, otherwise keeps current type.
+    /// For new code, prefer `with_body_type()`.
+    pub fn with_gravity(mut self, affected: bool) -> Self {
+        if !affected && self.body_type == BodyType::Dynamic {
+            // If disabling gravity on a dynamic body, it becomes kinematic
+            self.body_type = BodyType::Kinematic;
+        } else if affected && self.body_type == BodyType::Kinematic {
+            // If enabling gravity on a kinematic body, it becomes dynamic
+            self.body_type = BodyType::Dynamic;
         }
+        self
+    }
+
+    /// Set whether this body is static (legacy API)
+    ///
+    /// For new code, prefer `with_body_type()`.
+    pub fn with_static(mut self, is_static: bool) -> Self {
+        if is_static {
+            self.body_type = BodyType::Static;
+        } else if self.body_type == BodyType::Static {
+            self.body_type = BodyType::Dynamic;
+        }
+        self
+    }
+
+    /// Set the collision filter for this body
+    pub fn with_filter(mut self, filter: CollisionFilter) -> Self {
+        self.filter = filter;
+        self
+    }
+
+    /// Set the collision layer (which layer this body belongs to)
+    pub fn with_layer(mut self, layer: crate::collision::CollisionLayer) -> Self {
+        self.filter.layer = layer;
+        self
+    }
+
+    /// Set the collision mask (which layers this body can collide with)
+    pub fn with_mask(mut self, mask: crate::collision::CollisionLayer) -> Self {
+        self.filter.mask = mask;
         self
     }
 
@@ -137,12 +208,18 @@ pub struct StaticCollider {
     pub collider: Collider,
     /// Physics material (friction and restitution)
     pub material: PhysicsMaterial,
+    /// Collision filter (layer membership and collision mask)
+    pub filter: CollisionFilter,
 }
 
 impl StaticCollider {
     /// Create a new static collider with the given shape and material
     pub fn new(collider: Collider, material: PhysicsMaterial) -> Self {
-        Self { collider, material }
+        Self {
+            collider,
+            material,
+            filter: CollisionFilter::static_world(),
+        }
     }
 
     /// Create a plane collider
@@ -150,6 +227,7 @@ impl StaticCollider {
         Self {
             collider: Collider::Plane(Plane4D::new(normal, distance)),
             material,
+            filter: CollisionFilter::static_world(),
         }
     }
 
@@ -158,6 +236,7 @@ impl StaticCollider {
         Self {
             collider: Collider::Plane(Plane4D::floor(y)),
             material,
+            filter: CollisionFilter::static_world(),
         }
     }
 
@@ -167,7 +246,14 @@ impl StaticCollider {
         Self {
             collider: Collider::AABB(AABB4D::from_center_half_extents(center, half_extents)),
             material,
+            filter: CollisionFilter::static_world(),
         }
+    }
+
+    /// Set the collision filter for this static collider
+    pub fn with_filter(mut self, filter: CollisionFilter) -> Self {
+        self.filter = filter;
+        self
     }
 }
 
@@ -184,8 +270,8 @@ mod tests {
         assert_eq!(body.velocity, Vec4::ZERO);
         assert_eq!(body.mass, 1.0);
         assert_eq!(body.material, PhysicsMaterial::default());
-        assert!(body.affected_by_gravity);
-        assert!(!body.is_static);
+        assert!(body.affected_by_gravity());
+        assert!(!body.is_static());
 
         // Check collider is properly set
         assert_eq!(body.collider.center(), pos);
@@ -206,8 +292,8 @@ mod tests {
         let pos = Vec4::new(0.0, 0.0, 0.0, 0.0);
         let body = RigidBody4D::new_static_aabb(pos, Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-        assert!(body.is_static);
-        assert!(!body.affected_by_gravity);
+        assert!(body.is_static());
+        assert!(!body.affected_by_gravity());
     }
 
     #[test]
@@ -221,7 +307,7 @@ mod tests {
         assert_eq!(body.velocity, Vec4::new(1.0, 2.0, 0.0, 0.0));
         assert_eq!(body.mass, 5.0);
         assert_eq!(body.material.restitution, 0.8);
-        assert!(!body.affected_by_gravity);
+        assert!(!body.affected_by_gravity());
     }
 
     #[test]
@@ -269,7 +355,59 @@ mod tests {
             .with_gravity(true)
             .with_static(true);
 
-        assert!(body.is_static);
-        assert!(!body.affected_by_gravity);
+        assert!(body.is_static());
+        assert!(!body.affected_by_gravity());
+    }
+
+    // ===== Collision Filter Tests =====
+
+    #[test]
+    fn test_default_filter() {
+        let body = RigidBody4D::new_sphere(Vec4::ZERO, 1.0);
+        assert_eq!(body.filter, CollisionFilter::default());
+    }
+
+    #[test]
+    fn test_with_filter() {
+        use crate::collision::CollisionLayer;
+        let body = RigidBody4D::new_sphere(Vec4::ZERO, 1.0)
+            .with_filter(CollisionFilter::player());
+
+        assert_eq!(body.filter.layer, CollisionLayer::PLAYER);
+    }
+
+    #[test]
+    fn test_with_layer() {
+        use crate::collision::CollisionLayer;
+        let body = RigidBody4D::new_sphere(Vec4::ZERO, 1.0)
+            .with_layer(CollisionLayer::ENEMY);
+
+        assert_eq!(body.filter.layer, CollisionLayer::ENEMY);
+    }
+
+    #[test]
+    fn test_with_mask() {
+        use crate::collision::CollisionLayer;
+        let body = RigidBody4D::new_sphere(Vec4::ZERO, 1.0)
+            .with_mask(CollisionLayer::STATIC | CollisionLayer::ENEMY);
+
+        assert!(body.filter.mask.contains(CollisionLayer::STATIC));
+        assert!(body.filter.mask.contains(CollisionLayer::ENEMY));
+        assert!(!body.filter.mask.contains(CollisionLayer::PLAYER));
+    }
+
+    #[test]
+    fn test_static_collider_default_filter() {
+        let collider = StaticCollider::floor(0.0, PhysicsMaterial::CONCRETE);
+        assert_eq!(collider.filter, CollisionFilter::static_world());
+    }
+
+    #[test]
+    fn test_static_collider_with_filter() {
+        use crate::collision::CollisionLayer;
+        let collider = StaticCollider::floor(0.0, PhysicsMaterial::CONCRETE)
+            .with_filter(CollisionFilter::trigger(CollisionLayer::PLAYER));
+
+        assert_eq!(collider.filter.layer, CollisionLayer::TRIGGER);
     }
 }
