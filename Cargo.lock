@@ -1450,6 +1450,7 @@ dependencies = [
  "rust4d_core",
  "rust4d_input",
  "rust4d_math",
+ "rust4d_physics",
  "rust4d_render",
  "wgpu",
  "winit",
@@ -1460,6 +1461,7 @@ name = "rust4d_core"
 version = "0.1.0"
 dependencies = [
  "rust4d_math",
+ "rust4d_physics",
 ]
 
 [[package]]

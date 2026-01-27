@@ -3,6 +3,7 @@
 //! The World manages all entities in the simulation.
 
 use crate::Entity;
+use rust4d_physics::{PhysicsConfig, PhysicsWorld};
 
 /// A handle to an entity in the world
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -19,11 +20,12 @@ impl EntityHandle {
 /// The 4D world containing all entities
 ///
 /// The World is the central container for all game objects.
-/// It manages entities and will eventually integrate with physics.
+/// It manages entities and integrates with physics simulation.
 pub struct World {
     /// All entities in the world
     entities: Vec<Entity>,
-    // Future: physics_world: PhysicsWorld,
+    /// Optional physics simulation (None = no physics)
+    physics_world: Option<PhysicsWorld>,
 }
 
 impl Default for World {
@@ -37,6 +39,7 @@ impl World {
     pub fn new() -> Self {
         Self {
             entities: Vec::new(),
+            physics_world: None,
         }
     }
 
@@ -44,7 +47,24 @@ impl World {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entities: Vec::with_capacity(capacity),
+            physics_world: None,
         }
+    }
+
+    /// Enable physics for this world
+    pub fn with_physics(mut self, config: PhysicsConfig) -> Self {
+        self.physics_world = Some(PhysicsWorld::with_config(config));
+        self
+    }
+
+    /// Get the physics world (if enabled)
+    pub fn physics(&self) -> Option<&PhysicsWorld> {
+        self.physics_world.as_ref()
+    }
+
+    /// Get mutable physics world (if enabled)
+    pub fn physics_mut(&mut self) -> Option<&mut PhysicsWorld> {
+        self.physics_world.as_mut()
     }
 
     /// Add an entity to the world, returning its handle
@@ -86,14 +106,27 @@ impl World {
         self.entities.is_empty()
     }
 
-    /// Update the world (future: steps physics)
+    /// Update the world by stepping physics and syncing entity transforms
     ///
-    /// Currently a no-op, but will eventually:
-    /// - Step the physics simulation
-    /// - Update entity transforms from rigid bodies
-    pub fn update(&mut self, _dt: f32) {
-        // Future: self.physics_world.step(dt);
-        // Future: sync transforms from physics
+    /// This method:
+    /// 1. Steps the physics simulation (if enabled)
+    /// 2. Syncs entity transforms from their associated physics bodies
+    pub fn update(&mut self, dt: f32) {
+        // Step the physics simulation
+        if let Some(ref mut physics) = self.physics_world {
+            physics.step(dt);
+        }
+
+        // Sync entity transforms from their physics bodies
+        if let Some(ref physics) = self.physics_world {
+            for entity in &mut self.entities {
+                if let Some(body_handle) = entity.physics_body {
+                    if let Some(body) = physics.get_body(body_handle) {
+                        entity.transform.position = body.position;
+                    }
+                }
+            }
+        }
     }
 
     /// Clear all entities from the world
@@ -245,5 +278,83 @@ mod tests {
         // Test PartialEq
         let handle2 = EntityHandle(42);
         assert_eq!(handle, handle2);
+    }
+
+    #[test]
+    fn test_world_with_physics() {
+        use rust4d_physics::RigidBody4D;
+        use rust4d_math::Vec4;
+
+        // Create a world with physics enabled (no gravity for predictable test)
+        let config = PhysicsConfig::new(0.0, -100.0, 0.0);
+        let mut world = World::new().with_physics(config);
+
+        assert!(world.physics().is_some());
+
+        // Add a physics body with horizontal velocity
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 5.0, 0.0, 0.0), 0.5)
+            .with_velocity(Vec4::new(10.0, 0.0, 0.0, 0.0));
+        let body_handle = world.physics_mut().unwrap().add_body(body);
+
+        // Create an entity linked to the physics body
+        let entity = make_test_entity().with_physics_body(body_handle);
+        let entity_handle = world.add_entity(entity);
+
+        // Verify initial position
+        assert_eq!(world.get_entity(entity_handle).unwrap().transform.position.x, 0.0);
+
+        // Step physics (1 second with 10 units/sec velocity = 10 units displacement)
+        world.update(1.0);
+
+        // Entity transform should now reflect the physics body position
+        let entity = world.get_entity(entity_handle).unwrap();
+        assert!((entity.transform.position.x - 10.0).abs() < 0.001);
+        assert!((entity.transform.position.y - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_physics_sync_with_gravity() {
+        use rust4d_physics::RigidBody4D;
+        use rust4d_math::Vec4;
+
+        // Create a world with gravity (default config)
+        let mut world = World::new().with_physics(PhysicsConfig::default());
+
+        // Add a physics body that will fall
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 10.0, 0.0, 0.0), 0.5);
+        let body_handle = world.physics_mut().unwrap().add_body(body);
+
+        // Create an entity linked to the physics body
+        let entity = make_test_entity().with_physics_body(body_handle);
+        let entity_handle = world.add_entity(entity);
+
+        // Step physics
+        world.update(0.1);
+
+        // Entity should have fallen (gravity is -20, so after 0.1s, velocity = -2.0)
+        // Position changes by: initial_vel * dt + 0.5 * g * dt^2 = 0 + 0.5 * (-20) * 0.01 = -0.1
+        // But the actual integration is: v += g*dt, then p += v*dt
+        // So v = -2.0, then p = 10.0 + (-2.0) * 0.1 = 10.0 - 0.2 = 9.8
+        let entity = world.get_entity(entity_handle).unwrap();
+        assert!(entity.transform.position.y < 10.0);
+    }
+
+    #[test]
+    fn test_entity_without_physics_body() {
+        // Create a world with physics
+        let mut world = World::new().with_physics(PhysicsConfig::default());
+
+        // Add an entity WITHOUT a physics body
+        let mut entity = make_test_entity();
+        entity.transform.position = rust4d_math::Vec4::new(5.0, 5.0, 5.0, 5.0);
+        let entity_handle = world.add_entity(entity);
+
+        // Step physics
+        world.update(1.0);
+
+        // Entity position should be unchanged (not linked to physics)
+        let entity = world.get_entity(entity_handle).unwrap();
+        assert_eq!(entity.transform.position.x, 5.0);
+        assert_eq!(entity.transform.position.y, 5.0);
     }
 }

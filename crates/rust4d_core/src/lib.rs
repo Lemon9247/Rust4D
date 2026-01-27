@@ -20,3 +20,6 @@ pub use world::{World, EntityHandle};
 // Re-export commonly used types from rust4d_math for convenience
 pub use rust4d_math::{Vec4, Rotor4, RotationPlane, ConvexShape4D, Tetrahedron};
 pub use rust4d_math::{Tesseract4D, Hyperplane4D};
+
+// Re-export physics types for convenient access through rust4d_core
+pub use rust4d_physics::{BodyHandle, PhysicsConfig, PhysicsWorld, RigidBody4D};

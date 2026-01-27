@@ -37,6 +37,7 @@ rust4d_math.workspace = true
 rust4d_core.workspace = true
 rust4d_render.workspace = true
 rust4d_input.workspace = true
+rust4d_physics.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 pollster.workspace = true
