@@ -16,7 +16,7 @@ use rust4d_render::camera4d::Camera4D;
 use rust4d_render::geometry::{Tesseract, Hyperplane};
 use rust4d_render::pipeline::{
     SlicePipeline, RenderPipeline, SliceParams, RenderUniforms,
-    Vertex4D, GpuTetrahedron, perspective_matrix, look_at_matrix,
+    Vertex4D, GpuTetrahedron, perspective_matrix,
 };
 use rust4d_input::CameraController;
 
@@ -303,8 +303,10 @@ impl ApplicationHandler for App {
                     &self.slice_pipeline,
                     &self.render_pipeline,
                 ) {
-                    // Camera position in 3D (use xyz of 4D position)
-                    let eye = [self.camera.position.x, self.camera.position.y, self.camera.position.z];
+                    // Camera positions
+                    let pos = self.camera.position;
+                    let eye_3d = [pos.x, pos.y, pos.z];
+                    let camera_pos_4d = [pos.x, pos.y, pos.z, pos.w];
 
                     // Update slice parameters
                     let camera_matrix = self.camera.rotation_matrix();
@@ -313,8 +315,9 @@ impl ApplicationHandler for App {
                         tetrahedron_count: self.tetrahedra.len() as u32,
                         _padding: [0.0; 2],
                         camera_matrix,
-                        camera_eye: eye,
+                        camera_eye: eye_3d,
                         _padding2: 0.0,
+                        camera_position: camera_pos_4d,
                     };
                     slice_pipeline.update_params(&ctx.queue, &slice_params);
 
@@ -326,15 +329,18 @@ impl ApplicationHandler for App {
                         0.1,
                         100.0,
                     );
-                    let forward = self.camera.forward();
-                    let up = self.camera.up();
-                    let target = [
-                        eye[0] + forward.x,
-                        eye[1] + forward.y,
-                        eye[2] + forward.z,
+
+                    // The slice shader transforms 4D geometry to camera space:
+                    // 1. Translates by -camera_position (camera at origin)
+                    // 2. Rotates by inverse(camera_matrix) to align with camera view
+                    // So the output 3D coordinates are already in camera space.
+                    // View matrix is identity - no additional transformation needed.
+                    let view_matrix = [
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
                     ];
-                    // Use camera's actual up vector to avoid gimbal lock distortion
-                    let view_matrix = look_at_matrix(eye, target, [up.x, up.y, up.z]);
 
                     let render_uniforms = RenderUniforms {
                         view_matrix,

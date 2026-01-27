@@ -98,6 +98,84 @@ impl Rotor4 {
         r
     }
 
+    /// Create a rotor from Euler angles (XYZ order, intrinsic)
+    ///
+    /// This creates a 3D rotation compatible with Engine4D's quaternion Euler angles.
+    /// Used with `skip_y` to create 4D rotations that preserve the Y axis.
+    ///
+    /// # Arguments
+    /// * `x` - Rotation around X axis (pitch in YZ plane)
+    /// * `y` - Rotation around Y axis (yaw in XZ plane)
+    /// * `z` - Rotation around Z axis (roll in XY plane)
+    ///
+    /// # Rotation order
+    /// Rotations are applied in XYZ order (X first, then Y, then Z).
+    /// This matches Unity's `Quaternion.Euler(x, y, z)`.
+    pub fn from_euler_xyz(x: f32, y: f32, z: f32) -> Self {
+        // X rotation = YZ plane
+        let rx = Self::from_plane_angle(RotationPlane::YZ, x);
+        // Y rotation = XZ plane (note: negated for right-hand rule)
+        let ry = Self::from_plane_angle(RotationPlane::XZ, -y);
+        // Z rotation = XY plane
+        let rz = Self::from_plane_angle(RotationPlane::XY, z);
+
+        // Compose in XYZ order: Z * Y * X (Z applied last)
+        rz.compose(&ry.compose(&rx))
+    }
+
+    /// Create a rotor for rotation in the plane spanned by two vectors
+    ///
+    /// The rotation is in the plane defined by vectors `a` and `b`.
+    /// Positive angle rotates from `a` toward `b`.
+    ///
+    /// Returns identity if the vectors are parallel (no plane defined).
+    pub fn from_plane_vectors(a: Vec4, b: Vec4, angle: f32) -> Self {
+        // Compute the bivector components: B = a ∧ b
+        // B_ij = a_i * b_j - a_j * b_i
+        let b_xy = a.x * b.y - a.y * b.x;
+        let b_xz = a.x * b.z - a.z * b.x;
+        let b_xw = a.x * b.w - a.w * b.x;
+        let b_yz = a.y * b.z - a.z * b.y;
+        let b_yw = a.y * b.w - a.w * b.y;
+        let b_zw = a.z * b.w - a.w * b.z;
+
+        // Magnitude of the bivector
+        let mag_sq = b_xy * b_xy + b_xz * b_xz + b_xw * b_xw
+                   + b_yz * b_yz + b_yw * b_yw + b_zw * b_zw;
+
+        if mag_sq < 1e-10 {
+            // Vectors are parallel, no rotation plane
+            return Self::IDENTITY;
+        }
+
+        let mag = mag_sq.sqrt();
+        let inv_mag = 1.0 / mag;
+
+        // Normalize the bivector
+        let b_xy_n = b_xy * inv_mag;
+        let b_xz_n = b_xz * inv_mag;
+        let b_xw_n = b_xw * inv_mag;
+        let b_yz_n = b_yz * inv_mag;
+        let b_yw_n = b_yw * inv_mag;
+        let b_zw_n = b_zw * inv_mag;
+
+        // Rotor: R = cos(θ/2) - sin(θ/2) * B_normalized
+        let half = angle * 0.5;
+        let cos_h = half.cos();
+        let sin_h = half.sin();
+
+        Self {
+            s: cos_h,
+            b_xy: -sin_h * b_xy_n,
+            b_xz: -sin_h * b_xz_n,
+            b_xw: -sin_h * b_xw_n,
+            b_yz: -sin_h * b_yz_n,
+            b_yw: -sin_h * b_yw_n,
+            b_zw: -sin_h * b_zw_n,
+            p: 0.0,
+        }
+    }
+
     /// Compute the squared magnitude of the rotor
     #[inline]
     pub fn magnitude_squared(&self) -> f32 {

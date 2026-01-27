@@ -124,12 +124,14 @@ pub struct SliceParams {
     pub tetrahedron_count: u32,
     /// Padding for 16-byte alignment
     pub _padding: [f32; 2],
-    /// 4D camera rotation matrix (transforms world to camera space)
+    /// 4D camera rotation matrix (camera-local to world, needs transpose for view)
     pub camera_matrix: [[f32; 4]; 4],
-    /// 3D camera eye position (for normal orientation)
+    /// 3D camera eye position (for normal orientation in render pass)
     pub camera_eye: [f32; 3],
     /// Padding for 16-byte alignment
     pub _padding2: f32,
+    /// 4D camera position (for translating geometry to camera space)
+    pub camera_position: [f32; 4],
 }
 
 impl Default for SliceParams {
@@ -146,6 +148,7 @@ impl Default for SliceParams {
             ],
             camera_eye: [0.0, 0.0, 5.0],
             _padding2: 0.0,
+            camera_position: [0.0, 0.0, 5.0, 0.0],
         }
     }
 }
@@ -239,8 +242,8 @@ mod tests {
 
     #[test]
     fn test_slice_params_size() {
-        // 1 float + 1 u32 + 2 floats padding + 16 floats matrix + 3 floats eye + 1 float padding = 96 bytes
-        assert_eq!(size_of::<SliceParams>(), 96);
+        // 1 float + 1 u32 + 2 floats padding + 16 floats matrix + 3 floats eye + 1 float padding + 4 floats position = 112 bytes
+        assert_eq!(size_of::<SliceParams>(), 112);
     }
 
     #[test]
