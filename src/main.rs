@@ -12,8 +12,9 @@ use winit::{
 };
 
 use rust4d_core::{
-    World, Entity, ShapeRef, Material,
+    World, Entity, EntityHandle, ShapeRef, Material,
     Tesseract4D, Hyperplane4D,
+    PhysicsConfig, RigidBody4D, BodyHandle,
 };
 use rust4d_render::{
     context::RenderContext,
@@ -22,7 +23,7 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
-use rust4d_physics::{PlayerPhysics, Plane4D as PhysicsPlane, PhysicsWorld, RigidBody4D, sphere_vs_aabb, Collider, BodyHandle};
+use rust4d_physics::{PlayerPhysics, Plane4D as PhysicsPlane, sphere_vs_aabb, Collider};
 use rust4d_math::Vec4;
 
 /// Main application state
@@ -31,7 +32,7 @@ struct App {
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
     render_pipeline: Option<RenderPipeline>,
-    /// The 4D world containing all entities
+    /// The 4D world containing all entities (with physics enabled)
     world: World,
     /// Cached GPU geometry (rebuilt when world changes)
     geometry: RenderableGeometry,
@@ -43,10 +44,12 @@ struct App {
     player_physics: PlayerPhysics,
     /// Floor plane for player physics collision
     physics_floor: PhysicsPlane,
-    /// Physics world for dynamic objects (tesseract)
-    physics_world: PhysicsWorld,
-    /// Handle to the tesseract physics body
-    tesseract_body_handle: BodyHandle,
+    /// Handle to the tesseract entity (for physics body access)
+    tesseract_entity: EntityHandle,
+    /// Handle to the tesseract's physics body
+    tesseract_body: BodyHandle,
+    /// Last known tesseract position (for dirty detection)
+    last_tesseract_pos: Vec4,
 }
 
 /// Gravity constant for physics
@@ -57,17 +60,29 @@ const FLOOR_Y: f32 = -2.0;
 
 impl App {
     fn new() -> Self {
-        // Create the world
-        let mut world = World::with_capacity(2);
+        // Create the world with physics enabled
+        let physics_config = PhysicsConfig::new(GRAVITY, FLOOR_Y, 0.0);
+        let mut world = World::with_capacity(2).with_physics(physics_config);
 
-        // Add tesseract entity with position-based gradient coloring
+        // Create tesseract physics body first
+        // Tesseract size is 2.0, so half-extents are 1.0
+        // Start it at the origin (will rest on floor at Y=-2)
+        let tesseract_start = Vec4::new(0.0, 0.0, 0.0, 0.0);
+        let tesseract_body = RigidBody4D::new_aabb(tesseract_start, Vec4::new(1.0, 1.0, 1.0, 1.0))
+            .with_gravity(true)
+            .with_mass(10.0);  // Heavy enough to feel solid
+        let tesseract_body = world.physics_mut().unwrap().add_body(tesseract_body);
+
+        // Add tesseract entity linked to physics body
         let tesseract = Tesseract4D::new(2.0);
-        world.add_entity(Entity::with_material(
-            ShapeRef::shared(tesseract),
-            Material::WHITE, // Will be overridden by position gradient
-        ));
+        let tesseract_entity = world.add_entity(
+            Entity::with_material(
+                ShapeRef::shared(tesseract),
+                Material::WHITE, // Will be overridden by position gradient
+            ).with_physics_body(tesseract_body)
+        );
 
-        // Add checkerboard floor entity
+        // Add checkerboard floor entity (no physics - it's static/infinite)
         let floor = Hyperplane4D::new(FLOOR_Y, 10.0, 10, 5.0, 0.001);
         world.add_entity(Entity::with_material(
             ShapeRef::shared(floor),
@@ -81,25 +96,12 @@ impl App {
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());
 
-        // Create physics world with floor
-        let physics_config = rust4d_physics::PhysicsConfig::new(GRAVITY, FLOOR_Y, 0.0);
-        let mut physics_world = PhysicsWorld::with_config(physics_config);
-
-        // Add tesseract to physics world as a dynamic AABB
-        // Tesseract size is 2.0, so half-extents are 1.0
-        // Start it slightly above the floor
-        let tesseract_start = Vec4::new(0.0, 0.0, 0.0, 0.0);
-        let tesseract_body = RigidBody4D::new_aabb(tesseract_start, Vec4::new(1.0, 1.0, 1.0, 1.0))
-            .with_gravity(true)
-            .with_mass(10.0);  // Heavy enough to feel solid
-        let tesseract_body_handle = physics_world.add_body(tesseract_body);
-
-        // Create player physics
+        // Create player physics (separate from world physics for responsive FPS feel)
         // Start the player above the floor (floor at -2, player radius is 0.5)
         let player_start = Vec4::new(0.0, 0.0, 5.0, 0.0);
         let player_physics = PlayerPhysics::new(player_start);
 
-        // Floor plane for player physics
+        // Floor plane for player physics collision
         let physics_floor = PhysicsPlane::floor(FLOOR_Y);
 
         // Set camera to player start position
@@ -119,8 +121,9 @@ impl App {
             cursor_captured: false,
             player_physics,
             physics_floor,
-            physics_world,
-            tesseract_body_handle,
+            tesseract_entity,
+            tesseract_body,
+            last_tesseract_pos: tesseract_start,
         }
     }
 
@@ -340,9 +343,9 @@ impl ApplicationHandler for App {
                 self.player_physics.step(dt, GRAVITY, &self.physics_floor);
 
                 // 6. Check player-tesseract collision and apply push
-                {
-                    let player_sphere = self.player_physics.collider();
-                    if let Some(body) = self.physics_world.get_body(self.tesseract_body_handle) {
+                if let Some(physics) = self.world.physics() {
+                    if let Some(body) = physics.get_body(self.tesseract_body) {
+                        let player_sphere = self.player_physics.collider();
                         if let Collider::AABB(tesseract_aabb) = &body.collider {
                             if let Some(contact) = sphere_vs_aabb(&player_sphere, tesseract_aabb) {
                                 if contact.is_colliding() {
@@ -353,11 +356,13 @@ impl ApplicationHandler for App {
                                     let push_strength = 5.0;
                                     let push_velocity = -contact.normal * push_strength;
 
-                                    if let Some(body_mut) = self.physics_world.get_body_mut(self.tesseract_body_handle) {
-                                        // Add horizontal push (don't affect vertical velocity much)
-                                        body_mut.velocity.x += push_velocity.x;
-                                        body_mut.velocity.z += push_velocity.z;
-                                        body_mut.velocity.w += push_velocity.w;
+                                    if let Some(physics_mut) = self.world.physics_mut() {
+                                        if let Some(body_mut) = physics_mut.get_body_mut(self.tesseract_body) {
+                                            // Add horizontal push (don't affect vertical velocity much)
+                                            body_mut.velocity.x += push_velocity.x;
+                                            body_mut.velocity.z += push_velocity.z;
+                                            body_mut.velocity.w += push_velocity.w;
+                                        }
                                     }
                                 }
                             }
@@ -365,16 +370,34 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // 7. Step physics world (tesseract dynamics)
-                self.physics_world.step(dt);
+                // 7. Step world physics (tesseract dynamics) and sync entity transforms
+                self.world.update(dt);
 
-                // 8. Sync camera position to player physics
+                // 8. Check if tesseract moved and rebuild geometry if needed
+                if let Some(entity) = self.world.get_entity(self.tesseract_entity) {
+                    let current_pos = entity.transform.position;
+                    if current_pos != self.last_tesseract_pos {
+                        self.last_tesseract_pos = current_pos;
+                        // Rebuild geometry with new transforms
+                        self.geometry = Self::build_geometry(&self.world);
+                        // Re-upload to GPU
+                        if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
+                            slice_pipeline.upload_tetrahedra(
+                                &ctx.device,
+                                &self.geometry.vertices,
+                                &self.geometry.tetrahedra,
+                            );
+                        }
+                    }
+                }
+
+                // 9. Sync camera position to player physics
                 self.camera.position = self.player_physics.position;
 
-                // 9. Apply W movement (4D navigation - not affected by physics)
+                // 10. Apply W movement (4D navigation - not affected by physics)
                 self.camera.position.w += w_input * self.controller.w_move_speed * dt;
 
-                // 10. Apply mouse look for camera rotation (rotation only, position already set)
+                // 11. Apply mouse look for camera rotation (rotation only, position already set)
                 // We need to handle rotation separately since controller.update() also moves
                 // For now, call update but we've already set position, so rotation will apply
                 self.controller.update(&mut self.camera, dt, self.cursor_captured);
@@ -382,9 +405,6 @@ impl ApplicationHandler for App {
                 // Re-sync position after controller (it may have moved it)
                 self.camera.position = self.player_physics.position;
                 self.camera.position.w += w_input * self.controller.w_move_speed * dt;
-
-                // Update world (for any non-physics entity updates)
-                self.world.update(dt);
 
                 // Update window title with debug info
                 if let Some(window) = &self.window {
