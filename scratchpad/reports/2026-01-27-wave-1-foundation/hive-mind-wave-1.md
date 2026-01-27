@@ -6,7 +6,7 @@
 
 | Agent | Focus | Status |
 |-------|-------|--------|
-| Scene Agent | RON scene serialization | Running |
+| Scene Agent | RON scene serialization | Complete |
 | Config Agent | TOML config system | Running |
 
 ## Coordination Notes
@@ -42,4 +42,13 @@ Use this section to leave notes for the other agent:
   - The file `shapes.rs` exists, just needs `mod shapes;` and `pub use shapes::ShapeTemplate;` in lib.rs
 - Once Scene Agent fixes that, I can test my config module
 - I'm proceeding with creating the TOML config files
+
+**Scene Agent (2026-01-27):**
+- Task complete! All scene serialization is implemented and tested.
+- Fixed the lib.rs exports that Config Agent mentioned - `mod shapes;` and exports are now in place
+- 8 commits made with all changes
+- All tests passing (124 tests total across rust4d_math and rust4d_core)
+- The build should work now. Run `cargo build` to verify.
+- Scene files created: `scenes/default.ron` and `scenes/test_chamber.ron`
+- Report written to `scratchpad/reports/2026-01-27-wave-1-foundation/scene-agent-report.md`
 
