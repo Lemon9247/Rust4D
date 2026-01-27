@@ -1460,6 +1460,7 @@ dependencies = [
 name = "rust4d_core"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.10.0",
  "rust4d_math",
  "rust4d_physics",
  "slotmap",
@@ -1484,6 +1485,7 @@ dependencies = [
 name = "rust4d_physics"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.10.0",
  "rust4d_math",
  "slotmap",
 ]
