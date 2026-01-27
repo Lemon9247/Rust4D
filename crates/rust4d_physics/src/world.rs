@@ -187,13 +187,16 @@ impl PhysicsWorld {
         }
 
         // Phase 1: Apply gravity and integrate velocity
-        for (_key, body) in &mut self.bodies {
+        for (key, body) in &mut self.bodies {
             if body.is_static() {
                 continue;
             }
 
-            // Apply gravity
-            if body.affected_by_gravity() {
+            // Apply gravity to:
+            // - Dynamic bodies (normal physics objects)
+            // - The player body (kinematic but needs gravity for jumping/falling)
+            let is_player = self.player_body == Some(key);
+            if body.affected_by_gravity() || is_player {
                 body.velocity.y += self.config.gravity * dt;
             }
 
