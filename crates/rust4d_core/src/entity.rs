@@ -7,7 +7,9 @@ use std::sync::Arc;
 use bitflags::bitflags;
 use rust4d_math::ConvexShape4D;
 use rust4d_physics::BodyKey;
+use serde::{Serialize, Deserialize};
 use crate::Transform4D;
+use crate::shapes::ShapeTemplate;
 
 bitflags! {
     /// Flags indicating which parts of an entity have changed and need updating
@@ -32,7 +34,7 @@ bitflags! {
 /// A simple material with just a base color
 ///
 /// This is minimal for now - can be extended with PBR properties later.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Material {
     /// Base color as RGBA (each component 0.0-1.0)
     pub base_color: [f32; 4],
@@ -251,6 +253,67 @@ impl Entity {
     pub fn set_material(&mut self, material: Material) {
         self.material = material;
         self.mark_dirty(DirtyFlags::MATERIAL);
+    }
+}
+
+/// A serializable entity template
+///
+/// EntityTemplate is used for scene serialization. Unlike Entity, it stores
+/// a ShapeTemplate (enum) rather than a trait object, making it serializable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityTemplate {
+    /// Optional name for this entity (for lookup)
+    pub name: Option<String>,
+    /// Tags for categorization (e.g., "dynamic", "static")
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// The entity's transform in world space
+    pub transform: Transform4D,
+    /// The entity's shape template (serializable)
+    pub shape: ShapeTemplate,
+    /// The entity's material
+    pub material: Material,
+}
+
+impl EntityTemplate {
+    /// Create a new entity template
+    pub fn new(shape: ShapeTemplate, transform: Transform4D, material: Material) -> Self {
+        Self {
+            name: None,
+            tags: Vec::new(),
+            transform,
+            shape,
+            material,
+        }
+    }
+
+    /// Set the name of this template
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Add a tag to this template
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.push(tag.into());
+        self
+    }
+
+    /// Convert this template to an Entity
+    pub fn to_entity(&self) -> Entity {
+        let shape = self.shape.create_shape();
+        let mut entity = Entity::with_transform(
+            ShapeRef::Owned(shape),
+            self.transform,
+            self.material,
+        );
+        if let Some(ref name) = self.name {
+            entity = entity.with_name(name.clone());
+        }
+        for tag in &self.tags {
+            entity = entity.with_tag(tag.clone());
+        }
+        entity
     }
 }
 

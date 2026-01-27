@@ -9,3 +9,5 @@ rust4d_math.workspace = true
 rust4d_physics.workspace = true
 slotmap.workspace = true
 bitflags.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.8"
