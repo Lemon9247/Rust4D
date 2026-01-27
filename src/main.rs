@@ -79,18 +79,25 @@ impl App {
             Entity::with_material(
                 ShapeRef::shared(tesseract),
                 Material::WHITE, // Will be overridden by position gradient
-            ).with_physics_body(tesseract_body)
+            )
+            .with_physics_body(tesseract_body)
+            .with_name("tesseract")
+            .with_tag("dynamic")
         );
 
         // Add checkerboard floor entity (no physics - it's static/infinite)
         let floor = Hyperplane4D::new(FLOOR_Y, 10.0, 10, 5.0, 0.001);
-        world.add_entity(Entity::with_material(
-            ShapeRef::shared(floor),
-            Material::GRAY, // Will be overridden by checkerboard
-        ));
+        world.add_entity(
+            Entity::with_material(
+                ShapeRef::shared(floor),
+                Material::GRAY, // Will be overridden by checkerboard
+            )
+            .with_name("floor")
+            .with_tag("static")
+        );
 
         // Build GPU geometry from the world
-        let geometry = Self::build_geometry(&world, tesseract_entity);
+        let geometry = Self::build_geometry(&world);
 
         log::info!("World created with {} entities", world.entity_count());
         log::info!("Total geometry: {} vertices, {} tetrahedra",
@@ -128,7 +135,7 @@ impl App {
     }
 
     /// Build GPU geometry from the world using custom coloring
-    fn build_geometry(world: &World, tesseract_key: EntityKey) -> RenderableGeometry {
+    fn build_geometry(world: &World) -> RenderableGeometry {
         let mut geometry = RenderableGeometry::new();
 
         // Checkerboard pattern for the floor
@@ -138,12 +145,12 @@ impl App {
             2.0, // Cell size
         );
 
-        for (key, entity) in world.iter_with_keys() {
-            if key == tesseract_key {
-                // Tesseract: use position gradient
+        for (_key, entity) in world.iter_with_keys() {
+            if entity.has_tag("dynamic") {
+                // Dynamic entities (tesseract): use position gradient
                 geometry.add_entity_with_color(entity, &position_gradient_color);
             } else {
-                // Floor: use checkerboard pattern
+                // Static entities (floor): use checkerboard pattern
                 geometry.add_entity_with_color(entity, &|v, _m| {
                     checkerboard.color_for_position(v.x, v.z)
                 });
@@ -379,7 +386,7 @@ impl ApplicationHandler for App {
                     if current_pos != self.last_tesseract_pos {
                         self.last_tesseract_pos = current_pos;
                         // Rebuild geometry with new transforms
-                        self.geometry = Self::build_geometry(&self.world, self.tesseract_entity);
+                        self.geometry = Self::build_geometry(&self.world);
                         // Re-upload to GPU
                         if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
                             slice_pipeline.upload_tetrahedra(
