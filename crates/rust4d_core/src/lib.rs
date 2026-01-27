@@ -22,4 +22,4 @@ pub use rust4d_math::{Vec4, Rotor4, RotationPlane, ConvexShape4D, Tetrahedron};
 pub use rust4d_math::{Tesseract4D, Hyperplane4D};
 
 // Re-export physics types for convenient access through rust4d_core
-pub use rust4d_physics::{BodyKey, PhysicsConfig, PhysicsWorld, RigidBody4D};
+pub use rust4d_physics::{BodyKey, PhysicsConfig, PhysicsWorld, RigidBody4D, StaticCollider};

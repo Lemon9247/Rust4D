@@ -14,7 +14,7 @@ use winit::{
 use rust4d_core::{
     World, Entity, EntityKey, ShapeRef, Material,
     Tesseract4D, Hyperplane4D,
-    PhysicsConfig, RigidBody4D, BodyKey,
+    PhysicsConfig, RigidBody4D, BodyKey, StaticCollider,
 };
 use rust4d_render::{
     context::RenderContext,
@@ -61,10 +61,13 @@ const FLOOR_Y: f32 = -2.0;
 impl App {
     fn new() -> Self {
         // Create the world with physics enabled
-        // Concrete floor: high friction (0.7), low bounce (0.1)
-        let physics_config = PhysicsConfig::new(GRAVITY, FLOOR_Y, 0.0)
-            .with_floor_material(PhysicsMaterial::CONCRETE);
+        let physics_config = PhysicsConfig::new(GRAVITY);
         let mut world = World::with_capacity(2).with_physics(physics_config);
+
+        // Add floor as a static collider (concrete: high friction, low bounce)
+        world.physics_mut().unwrap().add_static_collider(
+            StaticCollider::floor(FLOOR_Y, PhysicsMaterial::CONCRETE)
+        );
 
         // Create tesseract physics body first
         // Tesseract size is 2.0, so half-extents are 1.0

@@ -340,7 +340,7 @@ mod tests {
         use rust4d_math::Vec4;
 
         // Create a world with physics enabled (no gravity for predictable test)
-        let config = PhysicsConfig::new(0.0, -100.0, 0.0);
+        let config = PhysicsConfig::new(0.0);
         let mut world = World::new().with_physics(config);
 
         assert!(world.physics().is_some());
