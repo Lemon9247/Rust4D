@@ -372,6 +372,58 @@ fn test_load_default_scene_file() {
 
 // ==================== Diagnostic Tests ====================
 
+/// Test that walking off the W edge causes falling (true 4D physics)
+#[test]
+fn test_player_falls_off_w_edge() {
+    let mut physics = PhysicsWorld::with_config(PhysicsConfig::new(-20.0));
+
+    // Add bounded floor: W extends from -5 to +5
+    physics.add_static_collider(StaticCollider::floor_bounded(
+        -2.0, 10.0, 5.0, 5.0, PhysicsMaterial::CONCRETE,
+    ));
+
+    // Add player sphere at center, resting on floor
+    let player = RigidBody4D::new_sphere(Vec4::new(0.0, -1.5, 0.0, 0.0), 0.5)
+        .with_body_type(BodyType::Kinematic);
+    let player_key = physics.add_body(player);
+    physics.set_player_body(player_key);
+
+    // Step physics to settle
+    for _ in 0..10 {
+        physics.step(1.0 / 60.0);
+    }
+
+    // Player should be grounded
+    assert!(physics.player_is_grounded(), "Player should be grounded at center");
+    let start_y = physics.player_position().unwrap().y;
+
+    // Move player to W=6 (outside floor's W bounds of -5 to +5)
+    // Keep applying movement each frame (like the game loop does)
+    for _ in 0..60 {
+        physics.apply_player_movement(Vec4::new(0.0, 0.0, 0.0, 10.0)); // W velocity
+        physics.step(1.0 / 60.0);
+    }
+
+    // Player should now be at W > 5 (off the floor in W dimension)
+    // 10 units/s * 1 second = 10 units moved in W
+    let pos = physics.player_position().unwrap();
+    assert!(pos.w > 5.0, "Player should have moved off W edge. W={}", pos.w);
+
+    // Player should NOT be grounded anymore (off the floor)
+    assert!(!physics.player_is_grounded(),
+        "Player should NOT be grounded when off W edge. W={}", pos.w);
+
+    // Continue stepping - player should fall
+    for _ in 0..60 {
+        physics.apply_player_movement(Vec4::ZERO); // Stop horizontal movement
+        physics.step(1.0 / 60.0);
+    }
+
+    let final_pos = physics.player_position().unwrap();
+    assert!(final_pos.y < start_y,
+        "Player should fall when off W edge. Start Y={}, Final Y={}", start_y, final_pos.y);
+}
+
 /// Print detailed state for debugging
 #[test]
 fn test_physics_step_trace() {

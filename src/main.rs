@@ -319,10 +319,11 @@ impl ApplicationHandler for App {
                 let forward_xz = Vec4::new(camera_forward.x, 0.0, camera_forward.z, 0.0).normalized();
                 let right_xz = Vec4::new(camera_right.x, 0.0, camera_right.z, 0.0).normalized();
 
-                // Combine movement direction
-                let move_dir = forward_xz * forward_input + right_xz * right_input;
+                // Combine movement direction (XZ from camera orientation, W from direct input)
+                let move_dir = forward_xz * forward_input + right_xz * right_input
+                    + Vec4::W * w_input;
 
-                // 3. Apply movement to player via unified physics world
+                // 3. Apply movement to player via unified physics world (includes W for true 4D physics)
                 let move_speed = self.controller.move_speed;
                 if let Some(physics) = self.scene_manager.active_world_mut().and_then(|w| w.physics_mut()) {
                     physics.apply_player_movement(move_dir * move_speed);
@@ -355,31 +356,20 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // 7. Sync camera XYZ position to player physics (preserve W for 4D navigation)
-                let camera_w = self.camera.position.w;
+                // 7. Sync camera position to player physics (all 4 dimensions for true 4D physics)
                 if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
-                    self.camera.position.x = pos.x;
-                    self.camera.position.y = pos.y;
-                    self.camera.position.z = pos.z;
-                    // W is controlled by player input, not physics
+                    self.camera.position = pos;
                 }
 
-                // 8. Apply W movement (4D navigation - not affected by physics)
-                self.camera.position.w = camera_w + w_input * self.controller.w_move_speed * dt;
-
-                // 9. Apply mouse look for camera rotation only
+                // 8. Apply mouse look for camera rotation only
                 // Note: controller.update() also applies movement which we don't want,
                 // but we re-sync position below to discard the unwanted movement
-                let camera_w = self.camera.position.w;
                 self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
-                // 10. Re-sync XYZ position after controller (discard its movement, keep rotation)
+                // 9. Re-sync position after controller (discard its movement, keep rotation)
                 if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
-                    self.camera.position.x = pos.x;
-                    self.camera.position.y = pos.y;
-                    self.camera.position.z = pos.z;
+                    self.camera.position = pos;
                 }
-                self.camera.position.w = camera_w;
 
                 // Update window title with debug info
                 if let Some(window) = &self.window {

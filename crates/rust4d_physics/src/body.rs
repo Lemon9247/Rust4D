@@ -568,7 +568,54 @@ mod tests {
         assert!(contact.is_some(), "Player penetrating floor should collide");
 
         // Player outside X/Z bounds - should NOT collide (can fall off edge)
-        let player_off_edge = Sphere4D::new(Vec4::new(15.0, -1.6, 5.0, 0.0), player_radius);
-        assert!(sphere_vs_aabb(&player_off_edge, aabb).is_none(), "Player off edge should not collide");
+        let player_off_edge_xz = Sphere4D::new(Vec4::new(15.0, -1.6, 5.0, 0.0), player_radius);
+        assert!(sphere_vs_aabb(&player_off_edge_xz, aabb).is_none(), "Player off X edge should not collide");
+
+        // Player outside W bounds - should NOT collide (can fall off W edge)
+        // Floor W extent is -5 to +5, so W=10 is outside
+        let player_off_edge_w = Sphere4D::new(Vec4::new(0.0, -1.6, 5.0, 10.0), player_radius);
+        assert!(sphere_vs_aabb(&player_off_edge_w, aabb).is_none(), "Player off W edge should not collide");
+    }
+
+    #[test]
+    fn test_floor_bounded_4d_edges() {
+        use crate::shapes::{Collider, Sphere4D};
+        use crate::collision::sphere_vs_aabb;
+
+        let collider = StaticCollider::floor_bounded(
+            -2.0,  // y: floor surface
+            10.0,  // half_size_xz (X/Z from -10 to +10)
+            5.0,   // half_size_w (W from -5 to +5)
+            5.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        );
+
+        let aabb = match &collider.collider {
+            Collider::AABB(aabb) => aabb,
+            _ => panic!("Expected AABB"),
+        };
+
+        let radius = 0.5;
+        let y_on_floor = -1.6; // Penetrating floor surface
+
+        // On floor at center - SHOULD collide
+        let on_floor = Sphere4D::new(Vec4::new(0.0, y_on_floor, 0.0, 0.0), radius);
+        assert!(sphere_vs_aabb(&on_floor, aabb).is_some(), "Center should collide");
+
+        // On floor at W=-4 (inside W bounds) - SHOULD collide
+        let inside_w = Sphere4D::new(Vec4::new(0.0, y_on_floor, 0.0, -4.0), radius);
+        assert!(sphere_vs_aabb(&inside_w, aabb).is_some(), "Inside W bounds should collide");
+
+        // Off floor at W=6 (outside W bounds) - should NOT collide
+        let outside_w_pos = Sphere4D::new(Vec4::new(0.0, y_on_floor, 0.0, 6.0), radius);
+        assert!(sphere_vs_aabb(&outside_w_pos, aabb).is_none(), "Outside +W should not collide");
+
+        // Off floor at W=-6 (outside W bounds) - should NOT collide
+        let outside_w_neg = Sphere4D::new(Vec4::new(0.0, y_on_floor, 0.0, -6.0), radius);
+        assert!(sphere_vs_aabb(&outside_w_neg, aabb).is_none(), "Outside -W should not collide");
+
+        // Off floor at X=12 - should NOT collide
+        let outside_x = Sphere4D::new(Vec4::new(12.0, y_on_floor, 0.0, 0.0), radius);
+        assert!(sphere_vs_aabb(&outside_x, aabb).is_none(), "Outside X should not collide");
     }
 }
