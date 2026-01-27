@@ -2,6 +2,7 @@
 //!
 //! An Entity represents an object in the 4D world with a transform, shape, and material.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use rust4d_math::ConvexShape4D;
 use rust4d_physics::BodyKey;
@@ -87,11 +88,17 @@ impl ShapeRef {
 /// An entity in the 4D world
 ///
 /// Each entity has:
+/// - An optional name (for lookup by name)
+/// - Tags (for categorization and filtering)
 /// - A transform (position, rotation, scale)
 /// - A shape (the geometry)
 /// - A material (visual properties)
 /// - An optional physics body key (links to PhysicsWorld)
 pub struct Entity {
+    /// Optional name for this entity (for lookup)
+    pub name: Option<String>,
+    /// Tags for categorization (e.g., "dynamic", "static", "enemy")
+    pub tags: HashSet<String>,
     /// The entity's transform in world space
     pub transform: Transform4D,
     /// The entity's shape
@@ -106,6 +113,8 @@ impl Entity {
     /// Create a new entity with the given shape
     pub fn new(shape: ShapeRef) -> Self {
         Self {
+            name: None,
+            tags: HashSet::new(),
             transform: Transform4D::identity(),
             shape,
             material: Material::default(),
@@ -116,6 +125,8 @@ impl Entity {
     /// Create a new entity with shape and material
     pub fn with_material(shape: ShapeRef, material: Material) -> Self {
         Self {
+            name: None,
+            tags: HashSet::new(),
             transform: Transform4D::identity(),
             shape,
             material,
@@ -126,11 +137,38 @@ impl Entity {
     /// Create a new entity with shape, transform, and material
     pub fn with_transform(shape: ShapeRef, transform: Transform4D, material: Material) -> Self {
         Self {
+            name: None,
+            tags: HashSet::new(),
             transform,
             shape,
             material,
             physics_body: None,
         }
+    }
+
+    /// Set the name of this entity (for lookup)
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Add a tag to this entity
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.insert(tag.into());
+        self
+    }
+
+    /// Add multiple tags to this entity
+    pub fn with_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        for tag in tags {
+            self.tags.insert(tag.into());
+        }
+        self
+    }
+
+    /// Check if this entity has a specific tag
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.tags.contains(tag)
     }
 
     /// Attach a physics body to this entity
