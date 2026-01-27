@@ -23,7 +23,7 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
-use rust4d_physics::{PlayerPhysics, Plane4D as PhysicsPlane, sphere_vs_aabb, Collider};
+use rust4d_physics::{PlayerPhysics, Plane4D as PhysicsPlane, sphere_vs_aabb, Collider, PhysicsMaterial};
 use rust4d_math::Vec4;
 
 /// Main application state
@@ -61,7 +61,9 @@ const FLOOR_Y: f32 = -2.0;
 impl App {
     fn new() -> Self {
         // Create the world with physics enabled
-        let physics_config = PhysicsConfig::new(GRAVITY, FLOOR_Y, 0.0);
+        // Concrete floor: high friction (0.7), low bounce (0.1)
+        let physics_config = PhysicsConfig::new(GRAVITY, FLOOR_Y, 0.0)
+            .with_floor_material(PhysicsMaterial::CONCRETE);
         let mut world = World::with_capacity(2).with_physics(physics_config);
 
         // Create tesseract physics body first
@@ -70,7 +72,8 @@ impl App {
         let tesseract_start = Vec4::new(0.0, 0.0, 0.0, 0.0);
         let tesseract_body = RigidBody4D::new_aabb(tesseract_start, Vec4::new(1.0, 1.0, 1.0, 1.0))
             .with_gravity(true)
-            .with_mass(10.0);  // Heavy enough to feel solid
+            .with_mass(10.0)  // Heavy enough to feel solid
+            .with_material(PhysicsMaterial::WOOD);  // Wood-like: moderate friction, low bounce
         let tesseract_body = world.physics_mut().unwrap().add_body(tesseract_body);
 
         // Add tesseract entity linked to physics body
