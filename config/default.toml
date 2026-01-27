@@ -1,0 +1,42 @@
+# Rust4D Default Configuration
+# User overrides go in config/user.toml (gitignored)
+
+[window]
+title = "Rust4D - 4D Rendering Engine"
+width = 1280
+height = 720
+fullscreen = false
+vsync = true
+
+[camera]
+start_position = [0.0, 0.0, 5.0, 0.0]
+fov = 45.0
+near = 0.1
+far = 100.0
+pitch_limit = 89.0
+
+[input]
+move_speed = 3.0
+w_move_speed = 2.0
+mouse_sensitivity = 0.002
+w_rotation_sensitivity = 0.005
+smoothing_half_life = 0.05
+smoothing_enabled = false
+
+[physics]
+gravity = -20.0
+jump_velocity = 8.0
+player_radius = 0.5
+floor_y = -2.0
+
+[rendering]
+max_triangles = 1000000
+background_color = [0.02, 0.02, 0.08, 1.0]
+light_dir = [0.5, 1.0, 0.3]
+ambient_strength = 0.3
+diffuse_strength = 0.7
+
+[debug]
+show_overlay = false
+log_level = "info"
+show_colliders = false

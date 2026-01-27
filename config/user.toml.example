@@ -1,0 +1,22 @@
+# User Configuration Example
+# Copy this file to user.toml to customize settings
+# This file is gitignored
+
+# Uncomment and modify values to override defaults
+
+# [window]
+# title = "My Custom Title"
+# width = 1920
+# height = 1080
+# fullscreen = true
+
+# [input]
+# mouse_sensitivity = 0.003
+# move_speed = 5.0
+
+# [physics]
+# gravity = -10.0
+
+# [debug]
+# show_overlay = true
+# log_level = "debug"
