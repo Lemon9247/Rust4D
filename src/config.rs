@@ -66,12 +66,18 @@ impl AppConfig {
 
         // Load default config (required)
         if default_path.exists() {
+            log::debug!("Loading default config from {:?}", default_path);
             figment = figment.merge(Toml::file(&default_path));
+        } else {
+            log::warn!("Default config not found at {:?}", default_path);
         }
 
         // Load user config (optional)
         if user_path.exists() {
+            log::info!("Loading user config from {:?}", user_path);
             figment = figment.merge(Toml::file(&user_path));
+        } else {
+            log::debug!("No user config at {:?}", user_path);
         }
 
         // Environment variables override everything
