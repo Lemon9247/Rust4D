@@ -7,7 +7,7 @@
 | Agent | Focus | Status |
 |-------|-------|--------|
 | Scene Agent | RON scene serialization | Complete |
-| Config Agent | TOML config system | Running |
+| Config Agent | TOML config system | Complete |
 
 ## Coordination Notes
 
