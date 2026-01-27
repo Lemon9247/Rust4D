@@ -3,7 +3,6 @@
 //! A 4D rendering engine that displays 3D cross-sections of 4D geometry.
 
 mod config;
-mod scene;
 
 use std::sync::Arc;
 use winit::{
@@ -14,7 +13,7 @@ use winit::{
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
-use rust4d_core::World;
+use rust4d_core::{World, SceneManager};
 use rust4d_render::{
     context::RenderContext,
     camera4d::Camera4D,
@@ -22,10 +21,8 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
-use rust4d_physics::PhysicsMaterial;
 use rust4d_math::Vec4;
 
-use scene::SceneBuilder;
 use config::AppConfig;
 
 /// Main application state
@@ -36,8 +33,8 @@ struct App {
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
     render_pipeline: Option<RenderPipeline>,
-    /// The 4D world containing all entities (with physics enabled)
-    world: World,
+    /// Scene manager handling scene stack and physics
+    scene_manager: SceneManager,
     /// Cached GPU geometry (rebuilt when world changes)
     geometry: RenderableGeometry,
     camera: Camera4D,
@@ -54,24 +51,39 @@ impl App {
             AppConfig::default()
         });
 
-        // Build the scene using SceneBuilder with config values
-        let player_start = Vec4::new(
-            config.camera.start_position[0],
-            config.camera.start_position[1],
-            config.camera.start_position[2],
-            config.camera.start_position[3],
-        );
-        let world = SceneBuilder::with_capacity(2)
-            .with_physics(config.physics.gravity)
-            .add_floor(config.physics.floor_y, 10.0, PhysicsMaterial::CONCRETE)
-            .add_player(player_start, config.physics.player_radius)
-            .add_tesseract(Vec4::ZERO, 2.0, "tesseract")
-            .build();
+        // Create scene manager and load scene from file
+        let mut scene_manager = SceneManager::new()
+            .with_player_radius(config.scene.player_radius);
+
+        // Load scene from configured path
+        let scene_name = scene_manager.load_scene(&config.scene.path)
+            .unwrap_or_else(|e| {
+                panic!("Failed to load scene '{}': {}", config.scene.path, e);
+            });
+
+        // Instantiate and activate the scene
+        scene_manager.instantiate(&scene_name)
+            .unwrap_or_else(|e| panic!("Failed to instantiate scene: {}", e));
+        scene_manager.push_scene(&scene_name)
+            .unwrap_or_else(|e| panic!("Failed to push scene: {}", e));
+
+        // Get player start from scene's player_spawn
+        let player_start = scene_manager.active_scene()
+            .and_then(|s| s.player_spawn)
+            .map(|spawn| Vec4::new(spawn[0], spawn[1], spawn[2], spawn[3]))
+            .unwrap_or_else(|| Vec4::new(
+                config.camera.start_position[0],
+                config.camera.start_position[1],
+                config.camera.start_position[2],
+                config.camera.start_position[3],
+            ));
 
         // Build GPU geometry from the world
-        let geometry = Self::build_geometry(&world);
+        let geometry = Self::build_geometry(scene_manager.active_world().unwrap());
 
-        log::info!("World created with {} entities", world.entity_count());
+        log::info!("Loaded scene '{}' with {} entities",
+            scene_name,
+            scene_manager.active_world().map(|w| w.entity_count()).unwrap_or(0));
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());
 
@@ -93,7 +105,7 @@ impl App {
             render_context: None,
             slice_pipeline: None,
             render_pipeline: None,
-            world,
+            scene_manager,
             geometry,
             camera,
             controller,
@@ -287,7 +299,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 // Calculate delta time
                 let now = std::time::Instant::now();
-                let dt = (now - self.last_frame).as_secs_f32();
+                let raw_dt = (now - self.last_frame).as_secs_f32();
+                // Cap dt to prevent huge physics steps on first frame or after window focus
+                let dt = raw_dt.min(1.0 / 30.0); // Max 33ms per frame
                 self.last_frame = now;
 
                 // === PHYSICS-BASED GAME LOOP ===
@@ -305,29 +319,30 @@ impl ApplicationHandler for App {
                 let forward_xz = Vec4::new(camera_forward.x, 0.0, camera_forward.z, 0.0).normalized();
                 let right_xz = Vec4::new(camera_right.x, 0.0, camera_right.z, 0.0).normalized();
 
-                // Combine movement direction
-                let move_dir = forward_xz * forward_input + right_xz * right_input;
+                // Combine movement direction (XZ from camera orientation, W from direct input)
+                let move_dir = forward_xz * forward_input + right_xz * right_input
+                    + Vec4::W * w_input;
 
-                // 3. Apply movement to player via unified physics world
+                // 3. Apply movement to player via unified physics world (includes W for true 4D physics)
                 let move_speed = self.controller.move_speed;
-                if let Some(physics) = self.world.physics_mut() {
+                if let Some(physics) = self.scene_manager.active_world_mut().and_then(|w| w.physics_mut()) {
                     physics.apply_player_movement(move_dir * move_speed);
                 }
 
                 // 4. Handle jump
                 if self.controller.consume_jump() {
-                    if let Some(physics) = self.world.physics_mut() {
+                    if let Some(physics) = self.scene_manager.active_world_mut().and_then(|w| w.physics_mut()) {
                         physics.player_jump();
                     }
                 }
 
                 // 5. Step world physics (tesseract + player dynamics) and sync entity transforms
-                self.world.update(dt);
+                self.scene_manager.update(dt);
 
                 // 6. Check for dirty entities and rebuild geometry if needed
-                if self.world.has_dirty_entities() {
+                if self.scene_manager.active_world().map(|w| w.has_dirty_entities()).unwrap_or(false) {
                     // Rebuild geometry with new transforms
-                    self.geometry = Self::build_geometry(&self.world);
+                    self.geometry = Self::build_geometry(self.scene_manager.active_world().unwrap());
                     // Re-upload to GPU
                     if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
                         slice_pipeline.upload_tetrahedra(
@@ -336,34 +351,25 @@ impl ApplicationHandler for App {
                             &self.geometry.tetrahedra,
                         );
                     }
-                    self.world.clear_all_dirty();
+                    if let Some(w) = self.scene_manager.active_world_mut() {
+                        w.clear_all_dirty();
+                    }
                 }
 
-                // 7. Sync camera XYZ position to player physics (preserve W for 4D navigation)
-                let camera_w = self.camera.position.w;
-                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
-                    self.camera.position.x = pos.x;
-                    self.camera.position.y = pos.y;
-                    self.camera.position.z = pos.z;
-                    // W is controlled by player input, not physics
+                // 7. Sync camera position to player physics (all 4 dimensions for true 4D physics)
+                if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
+                    self.camera.position = pos;
                 }
 
-                // 8. Apply W movement (4D navigation - not affected by physics)
-                self.camera.position.w = camera_w + w_input * self.controller.w_move_speed * dt;
-
-                // 9. Apply mouse look for camera rotation only
+                // 8. Apply mouse look for camera rotation only
                 // Note: controller.update() also applies movement which we don't want,
                 // but we re-sync position below to discard the unwanted movement
-                let camera_w = self.camera.position.w;
                 self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
-                // 10. Re-sync XYZ position after controller (discard its movement, keep rotation)
-                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
-                    self.camera.position.x = pos.x;
-                    self.camera.position.y = pos.y;
-                    self.camera.position.z = pos.z;
+                // 9. Re-sync position after controller (discard its movement, keep rotation)
+                if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
+                    self.camera.position = pos;
                 }
-                self.camera.position.w = camera_w;
 
                 // Update window title with debug info
                 if let Some(window) = &self.window {

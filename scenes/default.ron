@@ -6,12 +6,15 @@ Scene(
             name: Some("floor"),
             tags: ["static"],
             transform: Transform4D(
+                // Entity transform positions the floor at y=-2.0 in world space
+                // (Hyperplane visual mesh is created at y=0 in local space)
                 position: Vec4(x: 0.0, y: -2.0, z: 0.0, w: 0.0),
                 rotation: (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
                 scale: 1.0,
             ),
             shape: ShapeTemplate(
                 type: "Hyperplane",
+                // y is used for physics collider placement
                 y: -2.0,
                 size: 10.0,
                 subdivisions: 10,

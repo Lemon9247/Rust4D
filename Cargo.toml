@@ -52,3 +52,19 @@ figment.workspace = true
 
 [dev-dependencies]
 toml = "0.8"
+
+[[example]]
+name = "01_hello_tesseract"
+path = "examples/01_hello_tesseract.rs"
+
+[[example]]
+name = "02_multiple_shapes"
+path = "examples/02_multiple_shapes.rs"
+
+[[example]]
+name = "03_physics_demo"
+path = "examples/03_physics_demo.rs"
+
+[[example]]
+name = "04_camera_exploration"
+path = "examples/04_camera_exploration.rs"

@@ -271,15 +271,29 @@ impl PhysicsWorld {
         // Threshold for considering a surface as "ground" (normal pointing mostly up)
         const GROUND_NORMAL_THRESHOLD: f32 = 0.7;
 
-        for (_key, body) in &mut self.bodies {
+        for (key, body) in &mut self.bodies {
             if body.is_static() {
                 continue;
             }
+
+            // Check if this is the player body - used for edge falling detection
+            let is_player = self.player_body == Some(key);
 
             for static_col in &self.static_colliders {
                 // Check if collision layers allow this interaction
                 if !body.filter.collides_with(&static_col.filter) {
                     continue;
+                }
+
+                // Edge falling detection: if the player has walked off a bounded floor
+                // (their XZW position is outside the floor's bounds), skip collision
+                // with that floor's edges. This ensures clean falling into the void.
+                if is_player {
+                    if let Collider::AABB(_) = &static_col.collider {
+                        if !static_col.is_position_over(body.position) {
+                            continue;
+                        }
+                    }
                 }
 
                 let contact = Self::check_static_collision(&body.collider, &static_col.collider);
@@ -1207,6 +1221,243 @@ mod tests {
             "Kinematic velocity should not be modified by collision. Expected {:?}, got {:?}",
             initial_velocity,
             kinematic_body.velocity
+        );
+    }
+
+    // ====== Edge Falling Tests ======
+
+    #[test]
+    fn test_player_falls_when_walking_off_w_edge() {
+        use crate::body::BodyType;
+
+        // Create world with bounded floor (W bounds: -2 to +2)
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(-20.0));
+        world.add_static_collider(StaticCollider::floor_bounded(
+            0.0,   // y: floor surface at y=0
+            10.0,  // half_size_xz (X/Z from -10 to +10)
+            2.0,   // half_size_w (W from -2 to +2)
+            5.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        ));
+
+        // Player starts on the floor at W=0
+        let player = RigidBody4D::new_sphere(Vec4::new(0.0, 0.5, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Kinematic);
+        let player_key = world.add_body(player);
+        world.set_player_body(player_key);
+
+        // Move player past the W edge (W > 2.5 is completely off floor)
+        {
+            let body = world.get_body_mut(player_key).unwrap();
+            body.position.w = 3.0;
+            body.collider = body.collider.translated(Vec4::new(0.0, 0.0, 0.0, 3.0));
+        }
+
+        // Simulate for a short time - player should fall without oscillating
+        let initial_y = world.player_position().unwrap().y;
+        for _ in 0..20 {
+            world.step(0.016);
+        }
+
+        let final_pos = world.player_position().unwrap();
+
+        // Player should have fallen significantly (not hovering at edge)
+        // With gravity=-20, after 0.32s, delta_y ≈ 0.5*20*0.32^2 ≈ 1.0 units
+        assert!(
+            final_pos.y < initial_y - 0.5,
+            "Player should fall when off W edge. Started at y={}, ended at y={}",
+            initial_y,
+            final_pos.y
+        );
+
+        // Player should not be grounded
+        assert!(
+            !world.player_is_grounded(),
+            "Player off floor should not be grounded"
+        );
+    }
+
+    #[test]
+    fn test_player_no_oscillation_at_w_edge() {
+        use crate::body::BodyType;
+
+        // This test verifies the edge oscillation bug is fixed:
+        // When player is at the W edge boundary, they should either:
+        // 1. Fall cleanly through (if off the floor)
+        // 2. Land on the floor (if they return to being over the floor)
+        // They should NOT oscillate at the edge.
+
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(-20.0));
+        world.add_static_collider(StaticCollider::floor_bounded(
+            0.0,   // floor at y=0
+            10.0,  // half_size_xz
+            2.0,   // half_size_w (W: -2 to +2)
+            5.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        ));
+
+        // Player starts just at the W edge, trying to oscillate
+        // Position W=2.3 is just outside the floor bounds (W: -2 to +2)
+        let player = RigidBody4D::new_sphere(Vec4::new(0.0, 0.5, 0.0, 2.3), 0.5)
+            .with_body_type(BodyType::Kinematic);
+        let player_key = world.add_body(player);
+        world.set_player_body(player_key);
+
+        // Track Y positions over time to verify no oscillation
+        let mut y_positions = Vec::new();
+        let mut last_w = 2.3f32;
+
+        for i in 0..30 {
+            world.step(0.016);
+
+            // Alternate W velocity to simulate oscillation attempt
+            let w_vel = if i % 4 < 2 { -3.0 } else { 3.0 };
+            world.apply_player_movement(Vec4::new(0.0, 0.0, 0.0, w_vel));
+
+            let pos = world.player_position().unwrap();
+            y_positions.push(pos.y);
+            last_w = pos.w;
+        }
+
+        // Key assertion: player should not hover at original Y height
+        // If oscillating, Y would stay near 0.5 due to edge collisions pushing back
+        let final_y = y_positions.last().unwrap();
+
+        // Either the player fell significantly (if they stayed off the floor)
+        // or they landed on the floor (if they returned to being over it)
+        // But they should NOT be hovering at the original height while moving
+        let is_on_floor = *final_y > 0.4 && *final_y < 0.6 && last_w.abs() < 2.0;
+        let has_fallen = *final_y < 0.0;
+
+        assert!(
+            is_on_floor || has_fallen,
+            "Player should either land on floor or fall, not oscillate. Final y={}, w={}",
+            final_y,
+            last_w
+        );
+    }
+
+    #[test]
+    fn test_player_falls_into_void_when_far_off_edge() {
+        use crate::body::BodyType;
+
+        // When player is far off the edge and can't return before falling,
+        // they should fall into the void.
+
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(-20.0));
+        world.add_static_collider(StaticCollider::floor_bounded(
+            0.0,   // floor at y=0
+            10.0,  // half_size_xz
+            2.0,   // half_size_w (W: -2 to +2)
+            5.0,   // thickness (floor bottom at y=-5)
+            PhysicsMaterial::CONCRETE,
+        ));
+
+        // Player starts far off the W edge
+        let player = RigidBody4D::new_sphere(Vec4::new(0.0, 0.5, 0.0, 5.0), 0.5)
+            .with_body_type(BodyType::Kinematic)
+            .with_velocity(Vec4::new(0.0, 0.0, 0.0, -1.0)); // Slowly moving back
+        let player_key = world.add_body(player);
+        world.set_player_body(player_key);
+
+        // Simulate for longer - player should fall into void
+        for _ in 0..60 {
+            world.step(0.016);
+            world.apply_player_movement(Vec4::new(0.0, 0.0, 0.0, -1.0));
+        }
+
+        let final_pos = world.player_position().unwrap();
+
+        // Player should have fallen past the floor's bottom (y=-5)
+        // After 0.96s with gravity=-20: distance = 0.5*20*0.96^2 ≈ 9.2 units
+        // Starting at y=0.5, final y ≈ 0.5 - 9.2 = -8.7
+        assert!(
+            final_pos.y < -5.0,
+            "Player should fall into void when far off edge. Final y={}",
+            final_pos.y
+        );
+    }
+
+    #[test]
+    fn test_player_jumping_over_floor_still_works() {
+        use crate::body::BodyType;
+
+        // Make sure the edge falling fix doesn't break normal jumping
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(-20.0));
+        world.add_static_collider(StaticCollider::floor_bounded(
+            0.0,   // floor at y=0
+            10.0,  // half_size_xz
+            10.0,  // half_size_w (large, player stays over floor)
+            5.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        ));
+
+        // Player on floor
+        let player = RigidBody4D::new_sphere(Vec4::new(0.0, 0.4, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Kinematic);
+        let player_key = world.add_body(player);
+        world.set_player_body(player_key);
+
+        // Step to get grounded
+        world.step(0.016);
+        assert!(world.player_is_grounded(), "Player should start grounded");
+
+        // Jump
+        world.player_jump();
+        assert!(!world.player_is_grounded(), "Player should be airborne after jump");
+
+        // Let physics run - player should go up then land back on floor
+        for _ in 0..100 {
+            world.step(0.016);
+        }
+
+        // Should land and be grounded again
+        assert!(
+            world.player_is_grounded(),
+            "Player should land back on floor after jump"
+        );
+
+        let final_y = world.player_position().unwrap().y;
+        assert!(
+            final_y > 0.0 && final_y < 1.0,
+            "Player should be on floor surface. Final y={}",
+            final_y
+        );
+    }
+
+    #[test]
+    fn test_player_on_floor_center_stays_grounded() {
+        use crate::body::BodyType;
+
+        // Player in center of floor should work normally
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(-20.0));
+        world.add_static_collider(StaticCollider::floor_bounded(
+            0.0,   // floor at y=0
+            10.0,  // half_size_xz
+            10.0,  // half_size_w
+            5.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        ));
+
+        // Player above floor center
+        let player = RigidBody4D::new_sphere(Vec4::new(0.0, 1.0, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Kinematic);
+        let player_key = world.add_body(player);
+        world.set_player_body(player_key);
+
+        // Simulate until player lands
+        for _ in 0..50 {
+            world.step(0.016);
+        }
+
+        // Player should be grounded on floor
+        assert!(world.player_is_grounded(), "Player should be grounded on floor center");
+
+        let final_y = world.player_position().unwrap().y;
+        assert!(
+            (final_y - 0.5).abs() < 0.1,
+            "Player should rest at y=0.5 (radius above floor). Final y={}",
+            final_y
         );
     }
 }

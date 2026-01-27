@@ -40,3 +40,7 @@ diffuse_strength = 0.7
 show_overlay = false
 log_level = "info"
 show_colliders = false
+
+[scene]
+path = "scenes/test_chamber.ron"
+player_radius = 0.5

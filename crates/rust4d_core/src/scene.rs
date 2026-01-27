@@ -9,6 +9,10 @@ use std::fs;
 use std::io;
 
 use crate::entity::EntityTemplate;
+use crate::shapes::ShapeTemplate;
+use crate::World;
+use rust4d_math::Vec4;
+use rust4d_physics::{PhysicsConfig, RigidBody4D, StaticCollider, BodyType, PhysicsMaterial};
 
 /// A serializable scene containing entity templates
 ///
@@ -41,8 +45,10 @@ impl Scene {
 
     /// Load a scene from a RON file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, SceneLoadError> {
-        let contents = fs::read_to_string(path)?;
-        let scene = ron::from_str(&contents)?;
+        let contents = fs::read_to_string(path.as_ref())?;
+        let scene: Scene = ron::from_str(&contents)?;
+        log::debug!("Loaded scene '{}' with gravity={:?}, player_spawn={:?}",
+            scene.name, scene.gravity, scene.player_spawn);
         Ok(scene)
     }
 
@@ -137,6 +143,198 @@ impl std::fmt::Display for SceneSaveError {
 }
 
 impl std::error::Error for SceneSaveError {}
+
+/// Unified error type for scene operations
+///
+/// This is used by SceneManager for all scene-related errors, providing a single
+/// error type that covers loading, saving, and runtime scene management.
+#[derive(Debug)]
+pub enum SceneError {
+    /// IO error (file not found, permission denied, etc.)
+    Io(io::Error),
+    /// Parse error (invalid RON syntax)
+    Parse(ron::error::SpannedError),
+    /// Serialization error
+    Serialize(ron::Error),
+    /// Scene not loaded (requested template doesn't exist)
+    NotLoaded(String),
+    /// No active scene on the stack
+    NoActiveScene,
+}
+
+impl From<io::Error> for SceneError {
+    fn from(e: io::Error) -> Self {
+        SceneError::Io(e)
+    }
+}
+
+impl From<ron::error::SpannedError> for SceneError {
+    fn from(e: ron::error::SpannedError) -> Self {
+        SceneError::Parse(e)
+    }
+}
+
+impl From<ron::Error> for SceneError {
+    fn from(e: ron::Error) -> Self {
+        SceneError::Serialize(e)
+    }
+}
+
+impl From<SceneLoadError> for SceneError {
+    fn from(e: SceneLoadError) -> Self {
+        match e {
+            SceneLoadError::Io(io_err) => SceneError::Io(io_err),
+            SceneLoadError::Parse(parse_err) => SceneError::Parse(parse_err),
+        }
+    }
+}
+
+impl std::fmt::Display for SceneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SceneError::Io(e) => write!(f, "IO error: {}", e),
+            SceneError::Parse(e) => write!(f, "Parse error: {}", e),
+            SceneError::Serialize(e) => write!(f, "Serialize error: {}", e),
+            SceneError::NotLoaded(name) => write!(f, "Scene not loaded: {}", name),
+            SceneError::NoActiveScene => write!(f, "No active scene"),
+        }
+    }
+}
+
+impl std::error::Error for SceneError {}
+
+/// A runtime scene containing an instantiated World
+///
+/// ActiveScene wraps a World instance that has been instantiated from a Scene template
+/// (or created programmatically). It tracks the scene name and player spawn position
+/// from the original template.
+pub struct ActiveScene {
+    /// Scene name (from template or custom)
+    pub name: String,
+    /// Player spawn position (from template)
+    pub player_spawn: Option<[f32; 4]>,
+    /// The live world with entities and physics
+    pub world: World,
+}
+
+impl ActiveScene {
+    /// Create an active scene from a Scene template
+    ///
+    /// This instantiates all entities from the template into a new World,
+    /// optionally enabling physics with the provided config.
+    ///
+    /// The `player_radius` parameter sets the collision radius for the player body.
+    pub fn from_template(template: &Scene, physics_config: Option<PhysicsConfig>, player_radius: f32) -> Self {
+        log::debug!("from_template: physics_config={:?}, template.gravity={:?}", physics_config, template.gravity);
+
+        // Create world with physics
+        let mut world = if let Some(config) = physics_config {
+            log::debug!("Using provided physics_config with gravity={}", config.gravity);
+            World::new().with_physics(config)
+        } else if let Some(gravity) = template.gravity {
+            log::debug!("Using template gravity={}", gravity);
+            World::new().with_physics(PhysicsConfig::new(gravity))
+        } else {
+            log::debug!("No physics configured");
+            World::new()
+        };
+
+        // Instantiate all entities from the template, setting up physics based on tags
+        for entity_template in &template.entities {
+            let mut entity = entity_template.to_entity();
+            let is_static = entity_template.tags.contains(&"static".to_string());
+            let is_dynamic = entity_template.tags.contains(&"dynamic".to_string());
+
+            if let Some(physics) = world.physics_mut() {
+                if is_static {
+                    // Create bounded static collider for floor/walls (objects can fall off edges)
+                    if let ShapeTemplate::Hyperplane { y, size, cell_size, thickness, .. } = &entity_template.shape {
+                        log::debug!("Adding bounded floor collider: y={}, size={}, cell_size={}, thickness={}",
+                            y, size, cell_size, thickness);
+                        physics.add_static_collider(StaticCollider::floor_bounded(
+                            *y,
+                            *size,      // X/Z extent from hyperplane
+                            *cell_size, // W extent
+                            *thickness, // Y thickness
+                            PhysicsMaterial::CONCRETE,
+                        ));
+                    }
+                } else if is_dynamic {
+                    // Create dynamic rigid body for movable objects
+                    let position = Vec4::new(
+                        entity_template.transform.position.x,
+                        entity_template.transform.position.y,
+                        entity_template.transform.position.z,
+                        entity_template.transform.position.w,
+                    );
+
+                    // Get half-extent from shape
+                    let half_extent = match &entity_template.shape {
+                        ShapeTemplate::Tesseract { size } => size / 2.0,
+                        ShapeTemplate::Hyperplane { .. } => 1.0, // shouldn't be dynamic, but fallback
+                    };
+
+                    let body = RigidBody4D::new_aabb(
+                        position,
+                        Vec4::new(half_extent, half_extent, half_extent, half_extent),
+                    )
+                    .with_body_type(BodyType::Dynamic)
+                    .with_mass(10.0)
+                    .with_material(PhysicsMaterial::WOOD);
+
+                    let body_key = physics.add_body(body);
+                    entity = entity.with_physics_body(body_key);
+                }
+            }
+
+            world.add_entity(entity);
+        }
+
+        // Create player body from player_spawn
+        if let (Some(spawn), Some(physics)) = (template.player_spawn, world.physics_mut()) {
+            let position = Vec4::new(spawn[0], spawn[1], spawn[2], spawn[3]);
+            let player_body = RigidBody4D::new_sphere(position, player_radius)
+                .with_body_type(BodyType::Kinematic)
+                .with_mass(1.0)
+                .with_material(PhysicsMaterial::WOOD);
+
+            let body_key = physics.add_body(player_body);
+            physics.set_player_body(body_key);
+        }
+
+        Self {
+            name: template.name.clone(),
+            player_spawn: template.player_spawn,
+            world,
+        }
+    }
+
+    /// Create a new empty active scene with the given name
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            player_spawn: None,
+            world: World::new(),
+        }
+    }
+
+    /// Create with physics enabled
+    pub fn with_physics(mut self, config: PhysicsConfig) -> Self {
+        self.world = self.world.with_physics(config);
+        self
+    }
+
+    /// Set the player spawn position
+    pub fn with_player_spawn(mut self, spawn: [f32; 4]) -> Self {
+        self.player_spawn = Some(spawn);
+        self
+    }
+
+    /// Update the scene (steps physics)
+    pub fn update(&mut self, dt: f32) {
+        self.world.update(dt);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -299,5 +497,115 @@ Scene(
         assert_eq!(entity.transform.position.x, 1.0);
         assert_eq!(entity.material.base_color, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(entity.shape().vertex_count(), 16); // Tesseract has 16 vertices
+    }
+
+    // --- SceneError tests ---
+
+    #[test]
+    fn test_scene_error_display() {
+        let err = SceneError::NotLoaded("test_scene".to_string());
+        assert_eq!(format!("{}", err), "Scene not loaded: test_scene");
+
+        let err = SceneError::NoActiveScene;
+        assert_eq!(format!("{}", err), "No active scene");
+    }
+
+    #[test]
+    fn test_scene_error_from_io() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let scene_err: SceneError = io_err.into();
+        match scene_err {
+            SceneError::Io(_) => {}
+            _ => panic!("Expected Io variant"),
+        }
+    }
+
+    #[test]
+    fn test_scene_error_from_scene_load_error() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let load_err = SceneLoadError::Io(io_err);
+        let scene_err: SceneError = load_err.into();
+        match scene_err {
+            SceneError::Io(_) => {}
+            _ => panic!("Expected Io variant"),
+        }
+    }
+
+    // --- ActiveScene tests ---
+
+    #[test]
+    fn test_active_scene_new() {
+        let scene = ActiveScene::new("Test Scene");
+        assert_eq!(scene.name, "Test Scene");
+        assert!(scene.player_spawn.is_none());
+        assert!(scene.world.is_empty());
+    }
+
+    #[test]
+    fn test_active_scene_with_physics() {
+        let scene = ActiveScene::new("Physics Scene")
+            .with_physics(PhysicsConfig::new(-20.0));
+        assert!(scene.world.physics().is_some());
+        assert_eq!(scene.world.physics().unwrap().config.gravity, -20.0);
+    }
+
+    #[test]
+    fn test_active_scene_with_player_spawn() {
+        let scene = ActiveScene::new("Spawn Scene")
+            .with_player_spawn([1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(scene.player_spawn, Some([1.0, 2.0, 3.0, 4.0]));
+    }
+
+    #[test]
+    fn test_active_scene_from_template() {
+        // Create a scene template with entities
+        let mut template = Scene::new("Template Scene")
+            .with_gravity(-15.0)
+            .with_player_spawn(0.0, 1.0, 5.0, 0.0);
+
+        template.add_entity(EntityTemplate::new(
+            ShapeTemplate::tesseract(2.0),
+            Transform4D::from_position(Vec4::new(1.0, 0.0, 0.0, 0.0)),
+            Material::RED,
+        ).with_name("cube"));
+
+        // Instantiate from template
+        let active = ActiveScene::from_template(&template, None, 0.5);
+
+        assert_eq!(active.name, "Template Scene");
+        assert_eq!(active.player_spawn, Some([0.0, 1.0, 5.0, 0.0]));
+        assert_eq!(active.world.entity_count(), 1);
+
+        // Check physics was set from template gravity
+        assert!(active.world.physics().is_some());
+        assert_eq!(active.world.physics().unwrap().config.gravity, -15.0);
+
+        // Check entity was instantiated
+        let (_, entity) = active.world.get_by_name("cube").unwrap();
+        assert_eq!(entity.material.base_color, [1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_active_scene_from_template_override_physics() {
+        let template = Scene::new("Template").with_gravity(-10.0);
+
+        // Override physics config
+        let active = ActiveScene::from_template(
+            &template,
+            Some(PhysicsConfig::new(-30.0)),
+            0.5,
+        );
+
+        // Should use overridden config, not template gravity
+        assert_eq!(active.world.physics().unwrap().config.gravity, -30.0);
+    }
+
+    #[test]
+    fn test_active_scene_update() {
+        let mut scene = ActiveScene::new("Update Test")
+            .with_physics(PhysicsConfig::new(-20.0));
+
+        // Just verify update doesn't panic
+        scene.update(0.016);
     }
 }
