@@ -23,7 +23,7 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
-use rust4d_physics::{sphere_vs_aabb, Collider, PhysicsMaterial, BodyType};
+use rust4d_physics::{PhysicsMaterial, BodyType};
 use rust4d_math::Vec4;
 
 /// Main application state
@@ -344,50 +344,23 @@ impl ApplicationHandler for App {
                 // Combine movement direction
                 let move_dir = forward_xz * forward_input + right_xz * right_input;
 
-                // 3. Apply movement to player physics
+                // 3. Apply movement to player via unified physics world
                 let move_speed = self.controller.move_speed;
-                self.player_physics.apply_movement(move_dir * move_speed);
-
-                // 4. Handle jump
-                if self.controller.consume_jump() && self.player_physics.grounded {
-                    self.player_physics.jump();
+                if let Some(physics) = self.world.physics_mut() {
+                    physics.apply_player_movement(move_dir * move_speed);
                 }
 
-                // 5. Step player physics
-                self.player_physics.step(dt, GRAVITY, &self.physics_floor);
-
-                // 6. Check player-tesseract collision and apply push
-                if let Some(physics) = self.world.physics() {
-                    if let Some(body) = physics.get_body(self.tesseract_body) {
-                        let player_sphere = self.player_physics.collider();
-                        if let Collider::AABB(tesseract_aabb) = &body.collider {
-                            if let Some(contact) = sphere_vs_aabb(&player_sphere, tesseract_aabb) {
-                                if contact.is_colliding() {
-                                    // Push player out of tesseract
-                                    self.player_physics.position = self.player_physics.position + contact.normal * contact.penetration;
-
-                                    // Transfer some momentum to tesseract (push it)
-                                    let push_strength = 5.0;
-                                    let push_velocity = -contact.normal * push_strength;
-
-                                    if let Some(physics_mut) = self.world.physics_mut() {
-                                        if let Some(body_mut) = physics_mut.get_body_mut(self.tesseract_body) {
-                                            // Add horizontal push (don't affect vertical velocity much)
-                                            body_mut.velocity.x += push_velocity.x;
-                                            body_mut.velocity.z += push_velocity.z;
-                                            body_mut.velocity.w += push_velocity.w;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                // 4. Handle jump
+                if self.controller.consume_jump() {
+                    if let Some(physics) = self.world.physics_mut() {
+                        physics.player_jump();
                     }
                 }
 
-                // 7. Step world physics (tesseract dynamics) and sync entity transforms
+                // 8. Step world physics (tesseract + player dynamics) and sync entity transforms
                 self.world.update(dt);
 
-                // 8. Check if tesseract moved and rebuild geometry if needed
+                // 9. Check if tesseract moved and rebuild geometry if needed
                 if let Some(entity) = self.world.get_entity(self.tesseract_entity) {
                     let current_pos = entity.transform.position;
                     if current_pos != self.last_tesseract_pos {
@@ -405,19 +378,23 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // 9. Sync camera position to player physics
-                self.camera.position = self.player_physics.position;
+                // 5. Sync camera position to player physics
+                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
+                    self.camera.position = pos;
+                }
 
-                // 10. Apply W movement (4D navigation - not affected by physics)
+                // 6. Apply W movement (4D navigation - not affected by physics)
                 self.camera.position.w += w_input * self.controller.w_move_speed * dt;
 
-                // 11. Apply mouse look for camera rotation (rotation only, position already set)
+                // 7. Apply mouse look for camera rotation (rotation only, position already set)
                 // We need to handle rotation separately since controller.update() also moves
                 // For now, call update but we've already set position, so rotation will apply
                 self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
                 // Re-sync position after controller (it may have moved it)
-                self.camera.position = self.player_physics.position;
+                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
+                    self.camera.position = pos;
+                }
                 self.camera.position.w += w_input * self.controller.w_move_speed * dt;
 
                 // Update window title with debug info
