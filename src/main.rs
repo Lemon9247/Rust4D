@@ -12,9 +12,9 @@ use winit::{
 };
 
 use rust4d_core::{
-    World, Entity, EntityKey, ShapeRef, Material,
+    World, Entity, ShapeRef, Material,
     Tesseract4D, Hyperplane4D,
-    PhysicsConfig, RigidBody4D, BodyKey, StaticCollider,
+    PhysicsConfig, RigidBody4D, StaticCollider,
 };
 use rust4d_render::{
     context::RenderContext,
@@ -40,14 +40,6 @@ struct App {
     controller: CameraController,
     last_frame: std::time::Instant,
     cursor_captured: bool,
-    /// Key to the player's physics body
-    player_body: BodyKey,
-    /// Key to the tesseract entity (for physics body access)
-    tesseract_entity: EntityKey,
-    /// Key to the tesseract's physics body
-    tesseract_body: BodyKey,
-    /// Last known tesseract position (for dirty detection)
-    last_tesseract_pos: Vec4,
 }
 
 /// Gravity constant for physics
@@ -79,7 +71,7 @@ impl App {
 
         // Add tesseract entity linked to physics body
         let tesseract = Tesseract4D::new(2.0);
-        let tesseract_entity = world.add_entity(
+        world.add_entity(
             Entity::with_material(
                 ShapeRef::shared(tesseract),
                 Material::WHITE, // Will be overridden by position gradient
@@ -134,10 +126,6 @@ impl App {
             controller: CameraController::new(),
             last_frame: std::time::Instant::now(),
             cursor_captured: false,
-            player_body,
-            tesseract_entity,
-            tesseract_body,
-            last_tesseract_pos: tesseract_start,
         }
     }
 
@@ -357,41 +345,38 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // 8. Step world physics (tesseract + player dynamics) and sync entity transforms
+                // 5. Step world physics (tesseract + player dynamics) and sync entity transforms
                 self.world.update(dt);
 
-                // 9. Check if tesseract moved and rebuild geometry if needed
-                if let Some(entity) = self.world.get_entity(self.tesseract_entity) {
-                    let current_pos = entity.transform.position;
-                    if current_pos != self.last_tesseract_pos {
-                        self.last_tesseract_pos = current_pos;
-                        // Rebuild geometry with new transforms
-                        self.geometry = Self::build_geometry(&self.world);
-                        // Re-upload to GPU
-                        if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
-                            slice_pipeline.upload_tetrahedra(
-                                &ctx.device,
-                                &self.geometry.vertices,
-                                &self.geometry.tetrahedra,
-                            );
-                        }
+                // 6. Check for dirty entities and rebuild geometry if needed
+                if self.world.has_dirty_entities() {
+                    // Rebuild geometry with new transforms
+                    self.geometry = Self::build_geometry(&self.world);
+                    // Re-upload to GPU
+                    if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
+                        slice_pipeline.upload_tetrahedra(
+                            &ctx.device,
+                            &self.geometry.vertices,
+                            &self.geometry.tetrahedra,
+                        );
                     }
+                    self.world.clear_all_dirty();
                 }
 
-                // 5. Sync camera position to player physics
+                // 7. Sync camera position to player physics
                 if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
                     self.camera.position = pos;
                 }
 
-                // 6. Apply W movement (4D navigation - not affected by physics)
+                // 8. Apply W movement (4D navigation - not affected by physics)
                 self.camera.position.w += w_input * self.controller.w_move_speed * dt;
 
-                // 7. Apply mouse look for camera rotation (rotation only, position already set)
+                // 9. Apply mouse look for camera rotation (rotation only, position already set)
                 // We need to handle rotation separately since controller.update() also moves
                 // For now, call update but we've already set position, so rotation will apply
                 self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
-                // Re-sync position after controller (it may have moved it)
+                // 10. Re-sync position after controller (it may have moved it)
                 if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
                     self.camera.position = pos;
                 }
