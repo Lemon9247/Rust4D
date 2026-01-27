@@ -1,6 +1,7 @@
 # Rust4D
 
 A 4D rendering engine in Rust. See real-time 3D cross-sections of 4D geometry.
+Heavily inspired by [Engine4D](https://github.com/HackerPoet/Engine4D) by Code Parade
 
 ## What is this?
 
