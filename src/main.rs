@@ -26,9 +26,12 @@ use rust4d_physics::PhysicsMaterial;
 use rust4d_math::Vec4;
 
 use scene::SceneBuilder;
+use config::AppConfig;
 
 /// Main application state
 struct App {
+    /// Application configuration
+    config: AppConfig,
     window: Option<Arc<Window>>,
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
@@ -43,20 +46,25 @@ struct App {
     cursor_captured: bool,
 }
 
-/// Gravity constant for physics
-const GRAVITY: f32 = -20.0;
-
-/// Floor Y position for physics
-const FLOOR_Y: f32 = -2.0;
-
 impl App {
     fn new() -> Self {
-        // Build the scene using SceneBuilder
-        let player_start = Vec4::new(0.0, 0.0, 5.0, 0.0);
+        // Load configuration
+        let config = AppConfig::load().unwrap_or_else(|e| {
+            log::warn!("Failed to load config: {}. Using defaults.", e);
+            AppConfig::default()
+        });
+
+        // Build the scene using SceneBuilder with config values
+        let player_start = Vec4::new(
+            config.camera.start_position[0],
+            config.camera.start_position[1],
+            config.camera.start_position[2],
+            config.camera.start_position[3],
+        );
         let world = SceneBuilder::with_capacity(2)
-            .with_physics(GRAVITY)
-            .add_floor(FLOOR_Y, 10.0, PhysicsMaterial::CONCRETE)
-            .add_player(player_start, 0.5)
+            .with_physics(config.physics.gravity)
+            .add_floor(config.physics.floor_y, 10.0, PhysicsMaterial::CONCRETE)
+            .add_player(player_start, config.physics.player_radius)
             .add_tesseract(Vec4::ZERO, 2.0, "tesseract")
             .build();
 
@@ -71,7 +79,16 @@ impl App {
         let mut camera = Camera4D::new();
         camera.position = player_start;
 
+        // Configure controller from config
+        let controller = CameraController::new()
+            .with_move_speed(config.input.move_speed)
+            .with_w_move_speed(config.input.w_move_speed)
+            .with_mouse_sensitivity(config.input.mouse_sensitivity)
+            .with_smoothing_half_life(config.input.smoothing_half_life)
+            .with_smoothing(config.input.smoothing_enabled);
+
         Self {
+            config,
             window: None,
             render_context: None,
             slice_pipeline: None,
@@ -79,7 +96,7 @@ impl App {
             world,
             geometry,
             camera,
-            controller: CameraController::new(),
+            controller,
             last_frame: std::time::Instant::now(),
             cursor_captured: false,
         }
@@ -143,8 +160,11 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let window_attributes = Window::default_attributes()
-                .with_title("Rust4D - 4D Rendering Engine")
-                .with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
+                .with_title(&self.config.window.title)
+                .with_inner_size(winit::dpi::LogicalSize::new(
+                    self.config.window.width,
+                    self.config.window.height,
+                ));
 
             let window = Arc::new(
                 event_loop
