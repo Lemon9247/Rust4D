@@ -23,7 +23,7 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
-use rust4d_physics::{PlayerPhysics, Plane4D as PhysicsPlane, sphere_vs_aabb, Collider, PhysicsMaterial};
+use rust4d_physics::{sphere_vs_aabb, Collider, PhysicsMaterial, BodyType};
 use rust4d_math::Vec4;
 
 /// Main application state
@@ -40,10 +40,8 @@ struct App {
     controller: CameraController,
     last_frame: std::time::Instant,
     cursor_captured: bool,
-    /// Player physics for FPS-style movement with gravity
-    player_physics: PlayerPhysics,
-    /// Floor plane for player physics collision
-    physics_floor: PhysicsPlane,
+    /// Key to the player's physics body
+    player_body: BodyKey,
     /// Key to the tesseract entity (for physics body access)
     tesseract_entity: EntityKey,
     /// Key to the tesseract's physics body
@@ -102,20 +100,24 @@ impl App {
             .with_tag("static")
         );
 
+        // Create player physics body - kinematic (no gravity, user-controlled)
+        // Start the player above the floor (floor at -2, player radius is 0.5)
+        let player_start = Vec4::new(0.0, 0.0, 5.0, 0.0);
+        let player = RigidBody4D::new_sphere(player_start, 0.5)
+            .with_body_type(BodyType::Kinematic)
+            .with_mass(1.0)
+            .with_material(PhysicsMaterial::WOOD);
+        let player_body = world.physics_mut().unwrap().add_body(player);
+
+        // Register as the player body for jump/grounded detection
+        world.physics_mut().unwrap().set_player_body(player_body);
+
         // Build GPU geometry from the world
         let geometry = Self::build_geometry(&world);
 
         log::info!("World created with {} entities", world.entity_count());
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());
-
-        // Create player physics (separate from world physics for responsive FPS feel)
-        // Start the player above the floor (floor at -2, player radius is 0.5)
-        let player_start = Vec4::new(0.0, 0.0, 5.0, 0.0);
-        let player_physics = PlayerPhysics::new(player_start);
-
-        // Floor plane for player physics collision
-        let physics_floor = PhysicsPlane::floor(FLOOR_Y);
 
         // Set camera to player start position
         let mut camera = Camera4D::new();
@@ -132,8 +134,7 @@ impl App {
             controller: CameraController::new(),
             last_frame: std::time::Instant::now(),
             cursor_captured: false,
-            player_physics,
-            physics_floor,
+            player_body,
             tesseract_entity,
             tesseract_body,
             last_tesseract_pos: tesseract_start,
