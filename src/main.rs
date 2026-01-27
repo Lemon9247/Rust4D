@@ -14,7 +14,7 @@ use winit::{
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
-use rust4d_core::World;
+use rust4d_core::{World, SceneManager, ActiveScene};
 use rust4d_render::{
     context::RenderContext,
     camera4d::Camera4D,
@@ -36,8 +36,8 @@ struct App {
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
     render_pipeline: Option<RenderPipeline>,
-    /// The 4D world containing all entities (with physics enabled)
-    world: World,
+    /// Scene manager handling scene stack and physics
+    scene_manager: SceneManager,
     /// Cached GPU geometry (rebuilt when world changes)
     geometry: RenderableGeometry,
     camera: Camera4D,
@@ -61,6 +61,12 @@ impl App {
             config.camera.start_position[2],
             config.camera.start_position[3],
         );
+
+        // Create scene manager with physics config
+        let mut scene_manager = SceneManager::new()
+            .with_physics(rust4d_physics::PhysicsConfig::new(config.physics.gravity));
+
+        // Build the world using SceneBuilder
         let world = SceneBuilder::with_capacity(2)
             .with_physics(config.physics.gravity)
             .add_floor(config.physics.floor_y, 10.0, PhysicsMaterial::CONCRETE)
@@ -68,10 +74,20 @@ impl App {
             .add_tesseract(Vec4::ZERO, 2.0, "tesseract")
             .build();
 
-        // Build GPU geometry from the world
-        let geometry = Self::build_geometry(&world);
+        // Wrap in ActiveScene and register
+        let active_scene = ActiveScene {
+            name: "Main".to_string(),
+            player_spawn: Some([player_start.x, player_start.y, player_start.z, player_start.w]),
+            world,
+        };
+        scene_manager.register_active_scene("main", active_scene);
+        scene_manager.push_scene("main").expect("Failed to push main scene");
 
-        log::info!("World created with {} entities", world.entity_count());
+        // Build GPU geometry from the world
+        let geometry = Self::build_geometry(scene_manager.active_world().unwrap());
+
+        log::info!("Scene manager initialized with {} entities",
+            scene_manager.active_world().map(|w| w.entity_count()).unwrap_or(0));
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());
 
@@ -93,7 +109,7 @@ impl App {
             render_context: None,
             slice_pipeline: None,
             render_pipeline: None,
-            world,
+            scene_manager,
             geometry,
             camera,
             controller,
@@ -310,24 +326,24 @@ impl ApplicationHandler for App {
 
                 // 3. Apply movement to player via unified physics world
                 let move_speed = self.controller.move_speed;
-                if let Some(physics) = self.world.physics_mut() {
+                if let Some(physics) = self.scene_manager.active_world_mut().and_then(|w| w.physics_mut()) {
                     physics.apply_player_movement(move_dir * move_speed);
                 }
 
                 // 4. Handle jump
                 if self.controller.consume_jump() {
-                    if let Some(physics) = self.world.physics_mut() {
+                    if let Some(physics) = self.scene_manager.active_world_mut().and_then(|w| w.physics_mut()) {
                         physics.player_jump();
                     }
                 }
 
                 // 5. Step world physics (tesseract + player dynamics) and sync entity transforms
-                self.world.update(dt);
+                self.scene_manager.update(dt);
 
                 // 6. Check for dirty entities and rebuild geometry if needed
-                if self.world.has_dirty_entities() {
+                if self.scene_manager.active_world().map(|w| w.has_dirty_entities()).unwrap_or(false) {
                     // Rebuild geometry with new transforms
-                    self.geometry = Self::build_geometry(&self.world);
+                    self.geometry = Self::build_geometry(self.scene_manager.active_world().unwrap());
                     // Re-upload to GPU
                     if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
                         slice_pipeline.upload_tetrahedra(
@@ -336,12 +352,14 @@ impl ApplicationHandler for App {
                             &self.geometry.tetrahedra,
                         );
                     }
-                    self.world.clear_all_dirty();
+                    if let Some(w) = self.scene_manager.active_world_mut() {
+                        w.clear_all_dirty();
+                    }
                 }
 
                 // 7. Sync camera XYZ position to player physics (preserve W for 4D navigation)
                 let camera_w = self.camera.position.w;
-                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
+                if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
                     self.camera.position.x = pos.x;
                     self.camera.position.y = pos.y;
                     self.camera.position.z = pos.z;
@@ -358,7 +376,7 @@ impl ApplicationHandler for App {
                 self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
                 // 10. Re-sync XYZ position after controller (discard its movement, keep rotation)
-                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
+                if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
                     self.camera.position.x = pos.x;
                     self.camera.position.y = pos.y;
                     self.camera.position.z = pos.z;
