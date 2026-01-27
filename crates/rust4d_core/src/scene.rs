@@ -9,6 +9,8 @@ use std::fs;
 use std::io;
 
 use crate::entity::EntityTemplate;
+use crate::World;
+use rust4d_physics::PhysicsConfig;
 
 /// A serializable scene containing entity templates
 ///
@@ -137,6 +139,132 @@ impl std::fmt::Display for SceneSaveError {
 }
 
 impl std::error::Error for SceneSaveError {}
+
+/// Unified error type for scene operations
+///
+/// This is used by SceneManager for all scene-related errors, providing a single
+/// error type that covers loading, saving, and runtime scene management.
+#[derive(Debug)]
+pub enum SceneError {
+    /// IO error (file not found, permission denied, etc.)
+    Io(io::Error),
+    /// Parse error (invalid RON syntax)
+    Parse(ron::error::SpannedError),
+    /// Serialization error
+    Serialize(ron::Error),
+    /// Scene not loaded (requested template doesn't exist)
+    NotLoaded(String),
+    /// No active scene on the stack
+    NoActiveScene,
+}
+
+impl From<io::Error> for SceneError {
+    fn from(e: io::Error) -> Self {
+        SceneError::Io(e)
+    }
+}
+
+impl From<ron::error::SpannedError> for SceneError {
+    fn from(e: ron::error::SpannedError) -> Self {
+        SceneError::Parse(e)
+    }
+}
+
+impl From<ron::Error> for SceneError {
+    fn from(e: ron::Error) -> Self {
+        SceneError::Serialize(e)
+    }
+}
+
+impl From<SceneLoadError> for SceneError {
+    fn from(e: SceneLoadError) -> Self {
+        match e {
+            SceneLoadError::Io(io_err) => SceneError::Io(io_err),
+            SceneLoadError::Parse(parse_err) => SceneError::Parse(parse_err),
+        }
+    }
+}
+
+impl std::fmt::Display for SceneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SceneError::Io(e) => write!(f, "IO error: {}", e),
+            SceneError::Parse(e) => write!(f, "Parse error: {}", e),
+            SceneError::Serialize(e) => write!(f, "Serialize error: {}", e),
+            SceneError::NotLoaded(name) => write!(f, "Scene not loaded: {}", name),
+            SceneError::NoActiveScene => write!(f, "No active scene"),
+        }
+    }
+}
+
+impl std::error::Error for SceneError {}
+
+/// A runtime scene containing an instantiated World
+///
+/// ActiveScene wraps a World instance that has been instantiated from a Scene template
+/// (or created programmatically). It tracks the scene name and player spawn position
+/// from the original template.
+pub struct ActiveScene {
+    /// Scene name (from template or custom)
+    pub name: String,
+    /// Player spawn position (from template)
+    pub player_spawn: Option<[f32; 4]>,
+    /// The live world with entities and physics
+    pub world: World,
+}
+
+impl ActiveScene {
+    /// Create an active scene from a Scene template
+    ///
+    /// This instantiates all entities from the template into a new World,
+    /// optionally enabling physics with the provided config.
+    pub fn from_template(template: &Scene, physics_config: Option<PhysicsConfig>) -> Self {
+        let mut world = if let Some(config) = physics_config {
+            World::new().with_physics(config)
+        } else if let Some(gravity) = template.gravity {
+            World::new().with_physics(PhysicsConfig::new(gravity))
+        } else {
+            World::new()
+        };
+
+        // Instantiate all entities from the template
+        for entity_template in &template.entities {
+            world.add_entity(entity_template.to_entity());
+        }
+
+        Self {
+            name: template.name.clone(),
+            player_spawn: template.player_spawn,
+            world,
+        }
+    }
+
+    /// Create a new empty active scene with the given name
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            player_spawn: None,
+            world: World::new(),
+        }
+    }
+
+    /// Create with physics enabled
+    pub fn with_physics(mut self, config: PhysicsConfig) -> Self {
+        self.world = self.world.with_physics(config);
+        self
+    }
+
+    /// Set the player spawn position
+    pub fn with_player_spawn(mut self, spawn: [f32; 4]) -> Self {
+        self.player_spawn = Some(spawn);
+        self
+    }
+
+    /// Update the scene (steps physics)
+    pub fn update(&mut self, dt: f32) {
+        self.world.update(dt);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -299,5 +427,114 @@ Scene(
         assert_eq!(entity.transform.position.x, 1.0);
         assert_eq!(entity.material.base_color, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(entity.shape().vertex_count(), 16); // Tesseract has 16 vertices
+    }
+
+    // --- SceneError tests ---
+
+    #[test]
+    fn test_scene_error_display() {
+        let err = SceneError::NotLoaded("test_scene".to_string());
+        assert_eq!(format!("{}", err), "Scene not loaded: test_scene");
+
+        let err = SceneError::NoActiveScene;
+        assert_eq!(format!("{}", err), "No active scene");
+    }
+
+    #[test]
+    fn test_scene_error_from_io() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let scene_err: SceneError = io_err.into();
+        match scene_err {
+            SceneError::Io(_) => {}
+            _ => panic!("Expected Io variant"),
+        }
+    }
+
+    #[test]
+    fn test_scene_error_from_scene_load_error() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let load_err = SceneLoadError::Io(io_err);
+        let scene_err: SceneError = load_err.into();
+        match scene_err {
+            SceneError::Io(_) => {}
+            _ => panic!("Expected Io variant"),
+        }
+    }
+
+    // --- ActiveScene tests ---
+
+    #[test]
+    fn test_active_scene_new() {
+        let scene = ActiveScene::new("Test Scene");
+        assert_eq!(scene.name, "Test Scene");
+        assert!(scene.player_spawn.is_none());
+        assert!(scene.world.is_empty());
+    }
+
+    #[test]
+    fn test_active_scene_with_physics() {
+        let scene = ActiveScene::new("Physics Scene")
+            .with_physics(PhysicsConfig::new(-20.0));
+        assert!(scene.world.physics().is_some());
+        assert_eq!(scene.world.physics().unwrap().config.gravity, -20.0);
+    }
+
+    #[test]
+    fn test_active_scene_with_player_spawn() {
+        let scene = ActiveScene::new("Spawn Scene")
+            .with_player_spawn([1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(scene.player_spawn, Some([1.0, 2.0, 3.0, 4.0]));
+    }
+
+    #[test]
+    fn test_active_scene_from_template() {
+        // Create a scene template with entities
+        let mut template = Scene::new("Template Scene")
+            .with_gravity(-15.0)
+            .with_player_spawn(0.0, 1.0, 5.0, 0.0);
+
+        template.add_entity(EntityTemplate::new(
+            ShapeTemplate::tesseract(2.0),
+            Transform4D::from_position(Vec4::new(1.0, 0.0, 0.0, 0.0)),
+            Material::RED,
+        ).with_name("cube"));
+
+        // Instantiate from template
+        let active = ActiveScene::from_template(&template, None);
+
+        assert_eq!(active.name, "Template Scene");
+        assert_eq!(active.player_spawn, Some([0.0, 1.0, 5.0, 0.0]));
+        assert_eq!(active.world.entity_count(), 1);
+
+        // Check physics was set from template gravity
+        assert!(active.world.physics().is_some());
+        assert_eq!(active.world.physics().unwrap().config.gravity, -15.0);
+
+        // Check entity was instantiated
+        let (_, entity) = active.world.get_by_name("cube").unwrap();
+        assert_eq!(entity.material.base_color, [1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_active_scene_from_template_override_physics() {
+        let template = Scene::new("Template").with_gravity(-10.0);
+
+        // Override physics config
+        let active = ActiveScene::from_template(
+            &template,
+            Some(PhysicsConfig::new(-30.0)),
+        );
+
+        // Should use overridden config, not template gravity
+        assert_eq!(active.world.physics().unwrap().config.gravity, -30.0);
+    }
+
+    #[test]
+    fn test_active_scene_update() {
+        let mut scene = ActiveScene::new("Update Test")
+            .with_physics(PhysicsConfig::new(-20.0));
+
+        // Just verify update doesn't panic
+        scene.update(0.016);
     }
 }
