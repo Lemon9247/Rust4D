@@ -1,9 +1,8 @@
 //! Physics world and simulation
 
-use crate::body::{BodyKey, RigidBody4D};
-use crate::collision::{aabb_vs_aabb, aabb_vs_plane, sphere_vs_aabb, sphere_vs_plane};
-use crate::material::PhysicsMaterial;
-use crate::shapes::{Collider, Plane4D};
+use crate::body::{BodyKey, RigidBody4D, StaticCollider};
+use crate::collision::{aabb_vs_aabb, aabb_vs_plane, sphere_vs_aabb, sphere_vs_plane, Contact};
+use crate::shapes::{Collider, Sphere4D};
 use rust4d_math::Vec4;
 use slotmap::SlotMap;
 
@@ -12,39 +11,20 @@ use slotmap::SlotMap;
 pub struct PhysicsConfig {
     /// Gravity acceleration (applied to Y-axis, negative = down)
     pub gravity: f32,
-    /// Y position of the floor plane
-    pub floor_y: f32,
-    /// Physics material for the floor
-    pub floor_material: PhysicsMaterial,
 }
 
 impl Default for PhysicsConfig {
     fn default() -> Self {
         Self {
             gravity: -20.0,
-            floor_y: 0.0,
-            floor_material: PhysicsMaterial::CONCRETE,
         }
     }
 }
 
 impl PhysicsConfig {
-    /// Create a new physics config with custom values
-    ///
-    /// The `restitution` parameter sets floor material restitution for backwards compatibility.
-    /// For full material control, use `with_floor_material()`.
-    pub fn new(gravity: f32, floor_y: f32, restitution: f32) -> Self {
-        Self {
-            gravity,
-            floor_y,
-            floor_material: PhysicsMaterial::new(PhysicsMaterial::CONCRETE.friction, restitution),
-        }
-    }
-
-    /// Set the floor material
-    pub fn with_floor_material(mut self, material: PhysicsMaterial) -> Self {
-        self.floor_material = material;
-        self
+    /// Create a new physics config with the given gravity
+    pub fn new(gravity: f32) -> Self {
+        Self { gravity }
     }
 }
 
@@ -52,10 +32,8 @@ impl PhysicsConfig {
 pub struct PhysicsWorld {
     /// All rigid bodies in the world (using generational keys)
     bodies: SlotMap<BodyKey, RigidBody4D>,
-    /// The floor plane
-    floor: Plane4D,
-    /// Physics material for the floor
-    floor_material: PhysicsMaterial,
+    /// Static colliders (floors, walls, platforms)
+    static_colliders: Vec<StaticCollider>,
     /// Physics configuration
     pub config: PhysicsConfig,
 }
@@ -70,10 +48,19 @@ impl PhysicsWorld {
     pub fn with_config(config: PhysicsConfig) -> Self {
         Self {
             bodies: SlotMap::with_key(),
-            floor: Plane4D::floor(config.floor_y),
-            floor_material: config.floor_material,
+            static_colliders: Vec::new(),
             config,
         }
+    }
+
+    /// Add a static collider to the world
+    pub fn add_static_collider(&mut self, collider: StaticCollider) {
+        self.static_colliders.push(collider);
+    }
+
+    /// Get immutable access to static colliders
+    pub fn static_colliders(&self) -> &[StaticCollider] {
+        &self.static_colliders
     }
 
     /// Add a body to the world and return its key
@@ -111,7 +98,7 @@ impl PhysicsWorld {
     /// This performs:
     /// 1. Gravity application to non-static bodies with gravity enabled
     /// 2. Velocity integration into position
-    /// 3. Floor collision detection and resolution
+    /// 3. Static collider collision detection and resolution
     /// 4. Body-body collision detection and resolution
     pub fn step(&mut self, dt: f32) {
         // Phase 1: Apply gravity and integrate velocity
@@ -131,53 +118,102 @@ impl PhysicsWorld {
             body.collider = body.collider.translated(displacement);
         }
 
-        // Phase 2: Resolve floor collisions
-        self.resolve_floor_collisions();
+        // Phase 2: Resolve static collider collisions
+        self.resolve_static_collisions();
 
         // Phase 3: Resolve body-body collisions
         self.resolve_body_collisions();
     }
 
-    /// Resolve collisions between bodies and the floor
-    fn resolve_floor_collisions(&mut self) {
+    /// Check for collision between a body collider and a static collider
+    fn check_static_collision(body_collider: &Collider, static_collider: &Collider) -> Option<Contact> {
+        match (body_collider, static_collider) {
+            // Body sphere vs static plane
+            (Collider::Sphere(sphere), Collider::Plane(plane)) => {
+                sphere_vs_plane(sphere, plane)
+            }
+            // Body AABB vs static plane
+            (Collider::AABB(aabb), Collider::Plane(plane)) => {
+                aabb_vs_plane(aabb, plane)
+            }
+            // Body sphere vs static AABB
+            (Collider::Sphere(sphere), Collider::AABB(aabb)) => {
+                sphere_vs_aabb(sphere, aabb)
+            }
+            // Body AABB vs static AABB
+            (Collider::AABB(body_aabb), Collider::AABB(static_aabb)) => {
+                aabb_vs_aabb(body_aabb, static_aabb)
+            }
+            // Body sphere vs static sphere (rare but possible)
+            (Collider::Sphere(body_sphere), Collider::Sphere(static_sphere)) => {
+                Self::sphere_vs_sphere(body_sphere, static_sphere)
+            }
+            // Body AABB vs static sphere
+            (Collider::AABB(aabb), Collider::Sphere(sphere)) => {
+                // Flip the result since sphere_vs_aabb returns normal pointing from AABB to sphere
+                sphere_vs_aabb(sphere, aabb).map(|mut c| {
+                    c.normal = -c.normal;
+                    c
+                })
+            }
+            // Plane colliders don't move so body can't be a plane
+            (Collider::Plane(_), _) => None,
+        }
+    }
+
+    /// Sphere vs sphere collision (returns contact from sphere A toward B)
+    fn sphere_vs_sphere(a: &Sphere4D, b: &Sphere4D) -> Option<Contact> {
+        let delta = b.center - a.center;
+        let dist_sq = delta.length_squared();
+        let min_dist = a.radius + b.radius;
+
+        if dist_sq < min_dist * min_dist && dist_sq > 0.0001 {
+            let dist = dist_sq.sqrt();
+            let penetration = min_dist - dist;
+            let normal = delta.normalized();
+            let point = a.center + normal * a.radius;
+            Some(Contact::new(point, normal, penetration))
+        } else {
+            None
+        }
+    }
+
+    /// Resolve collisions between bodies and static colliders
+    fn resolve_static_collisions(&mut self) {
         for (_key, body) in &mut self.bodies {
             if body.is_static {
                 continue;
             }
 
-            let contact = match &body.collider {
-                Collider::Sphere(sphere) => sphere_vs_plane(sphere, &self.floor),
-                Collider::AABB(aabb) => aabb_vs_plane(aabb, &self.floor),
-            };
+            for static_col in &self.static_colliders {
+                let contact = Self::check_static_collision(&body.collider, &static_col.collider);
 
-            if let Some(contact) = contact {
-                if contact.is_colliding() {
-                    // Push the body out of the floor
-                    let correction = contact.normal * contact.penetration;
-                    body.apply_correction(correction);
+                if let Some(contact) = contact {
+                    if contact.is_colliding() {
+                        // Push the body out of the static collider
+                        let correction = contact.normal * contact.penetration;
+                        body.apply_correction(correction);
 
-                    // Combine body and floor materials
-                    let combined = body.material.combine(&self.floor_material);
+                        // Combine body and static collider materials
+                        let combined = body.material.combine(&static_col.material);
 
-                    // Handle velocity response
-                    let velocity_along_normal = body.velocity.dot(contact.normal);
-                    if velocity_along_normal < 0.0 {
-                        // Body is moving into the floor
-                        // Remove the normal component of velocity and optionally bounce
-                        let normal_velocity = contact.normal * velocity_along_normal;
-                        body.velocity = body.velocity - normal_velocity * (1.0 + combined.restitution);
+                        // Handle velocity response
+                        let velocity_along_normal = body.velocity.dot(contact.normal);
+                        if velocity_along_normal < 0.0 {
+                            // Body is moving into the collider
+                            // Remove the normal component of velocity and optionally bounce
+                            let normal_velocity = contact.normal * velocity_along_normal;
+                            body.velocity = body.velocity - normal_velocity * (1.0 + combined.restitution);
 
-                        // Apply friction to horizontal (tangent) velocity
-                        // Tangent velocity = total velocity - normal component
-                        let tangent_velocity = body.velocity - contact.normal * body.velocity.dot(contact.normal);
-                        let tangent_speed = tangent_velocity.length();
+                            // Apply friction to horizontal (tangent) velocity
+                            let tangent_velocity = body.velocity - contact.normal * body.velocity.dot(contact.normal);
+                            let tangent_speed = tangent_velocity.length();
 
-                        if tangent_speed > 0.0001 {
-                            // Apply friction: reduce tangent velocity based on friction coefficient
-                            // Using a simple model where friction applies a deceleration
-                            let friction_factor = 1.0 - combined.friction;
-                            body.velocity = contact.normal * body.velocity.dot(contact.normal)
-                                          + tangent_velocity * friction_factor;
+                            if tangent_speed > 0.0001 {
+                                let friction_factor = 1.0 - combined.friction;
+                                body.velocity = contact.normal * body.velocity.dot(contact.normal)
+                                              + tangent_velocity * friction_factor;
+                            }
                         }
                     }
                 }
@@ -213,21 +249,7 @@ impl PhysicsWorld {
                 // The contact normal convention: points FROM body A TOWARD body B
                 let contact = match (&collider_a, &collider_b) {
                     (Collider::Sphere(a), Collider::Sphere(b)) => {
-                        // Sphere vs Sphere
-                        let delta = b.center - a.center;
-                        let dist_sq = delta.length_squared();
-                        let min_dist = a.radius + b.radius;
-
-                        if dist_sq < min_dist * min_dist && dist_sq > 0.0001 {
-                            let dist = dist_sq.sqrt();
-                            let penetration = min_dist - dist;
-                            // Normal points from A toward B
-                            let normal = delta.normalized();
-                            let point = a.center + normal * a.radius;
-                            Some(crate::collision::Contact::new(point, normal, penetration))
-                        } else {
-                            None
-                        }
+                        Self::sphere_vs_sphere(a, b)
                     }
                     (Collider::Sphere(sphere), Collider::AABB(aabb)) => {
                         // sphere_vs_aabb returns normal pointing from AABB toward sphere
@@ -250,6 +272,8 @@ impl PhysicsWorld {
                             c
                         })
                     }
+                    // Plane colliders are only used for static colliders
+                    (Collider::Plane(_), _) | (_, Collider::Plane(_)) => None,
                 };
 
                 if let Some(contact) = contact {
@@ -349,21 +373,25 @@ impl Default for PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::material::PhysicsMaterial;
 
     #[test]
     fn test_physics_config_default() {
         let config = PhysicsConfig::default();
         assert_eq!(config.gravity, -20.0);
-        assert_eq!(config.floor_y, 0.0);
-        assert_eq!(config.floor_material, PhysicsMaterial::CONCRETE);
     }
 
     #[test]
     fn test_physics_config_custom() {
-        let config = PhysicsConfig::new(-10.0, 5.0, 0.5);
+        let config = PhysicsConfig::new(-10.0);
         assert_eq!(config.gravity, -10.0);
-        assert_eq!(config.floor_y, 5.0);
-        assert_eq!(config.floor_material.restitution, 0.5);
+    }
+
+    /// Helper to create a world with a floor at the given Y position
+    fn world_with_floor(gravity: f32, floor_y: f32, floor_material: PhysicsMaterial) -> PhysicsWorld {
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(gravity));
+        world.add_static_collider(StaticCollider::floor(floor_y, floor_material));
+        world
     }
 
     #[test]
@@ -446,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_velocity_integration() {
-        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0, 0.0, 0.0)); // No gravity
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0)); // No gravity
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 10.0, 0.0, 0.0), 0.5)
             .with_velocity(Vec4::new(10.0, 0.0, 0.0, 0.0));
         let handle = world.add_body(body);
@@ -473,8 +501,8 @@ mod tests {
 
     #[test]
     fn test_floor_collision() {
-        let mut world = PhysicsWorld::new();
-        // Sphere starting below the floor
+        let mut world = world_with_floor(-20.0, 0.0, PhysicsMaterial::CONCRETE);
+        // Sphere starting below the floor (partially penetrating)
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.3, 0.0, 0.0), 0.5)
             .with_gravity(false);
         let handle = world.add_body(body);
@@ -490,8 +518,7 @@ mod tests {
     #[test]
     fn test_floor_collision_with_downward_velocity() {
         // Use a floor material with zero restitution
-        let config = PhysicsConfig::new(0.0, 0.0, 0.0);
-        let mut world = PhysicsWorld::with_config(config);
+        let mut world = world_with_floor(0.0, 0.0, PhysicsMaterial::new(0.5, 0.0));
         // Sphere above floor with downward velocity
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.6, 0.0, 0.0), 0.5)
             .with_velocity(Vec4::new(0.0, -10.0, 0.0, 0.0))
@@ -508,8 +535,8 @@ mod tests {
 
     #[test]
     fn test_floor_collision_with_bounce() {
-        let config = PhysicsConfig::new(0.0, 0.0, 1.0); // Perfect bounce
-        let mut world = PhysicsWorld::with_config(config);
+        // Perfect bounce floor (restitution = 1.0)
+        let mut world = world_with_floor(0.0, 0.0, PhysicsMaterial::new(0.5, 1.0));
 
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.6, 0.0, 0.0), 0.5)
             .with_velocity(Vec4::new(0.0, -10.0, 0.0, 0.0));
@@ -524,7 +551,8 @@ mod tests {
 
     #[test]
     fn test_body_body_collision_sphere_vs_static_aabb() {
-        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0, -100.0, 0.0)); // No floor in the way
+        // No floor (no static colliders)
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0));
 
         // Static AABB
         let aabb = RigidBody4D::new_static_aabb(Vec4::ZERO, Vec4::new(1.0, 1.0, 1.0, 1.0));
@@ -548,7 +576,8 @@ mod tests {
 
     #[test]
     fn test_body_body_collision_two_spheres() {
-        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0, -100.0, 0.0)); // No floor in the way
+        // No floor (no static colliders)
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0));
 
         // First sphere stationary
         let sphere1 = RigidBody4D::new_sphere(Vec4::new(0.0, 0.0, 0.0, 0.0), 0.5);
@@ -574,7 +603,7 @@ mod tests {
 
     #[test]
     fn test_collider_stays_synced_with_position() {
-        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0, 0.0, 0.0));
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0));
 
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 10.0, 0.0, 0.0), 0.5)
             .with_velocity(Vec4::new(5.0, 0.0, 0.0, 0.0));
@@ -605,9 +634,7 @@ mod tests {
     #[test]
     fn test_friction_slows_horizontal_movement() {
         // High friction floor (rubber)
-        let config = PhysicsConfig::default()
-            .with_floor_material(PhysicsMaterial::RUBBER);
-        let mut world = PhysicsWorld::with_config(config);
+        let mut world = world_with_floor(-20.0, 0.0, PhysicsMaterial::RUBBER);
 
         // Sphere sliding on floor with horizontal velocity
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.5, 0.0, 0.0), 0.5)
@@ -627,9 +654,7 @@ mod tests {
     #[test]
     fn test_ice_floor_low_friction() {
         // Ice floor (very low friction)
-        let config = PhysicsConfig::default()
-            .with_floor_material(PhysicsMaterial::ICE);
-        let mut world = PhysicsWorld::with_config(config);
+        let mut world = world_with_floor(-20.0, 0.0, PhysicsMaterial::ICE);
 
         // Sphere sliding on floor with horizontal velocity
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 0.5, 0.0, 0.0), 0.5)
@@ -647,11 +672,48 @@ mod tests {
     }
 
     #[test]
-    fn test_floor_material_combine() {
-        let config = PhysicsConfig::default()
-            .with_floor_material(PhysicsMaterial::METAL);
-        let world = PhysicsWorld::with_config(config);
+    fn test_static_colliders() {
+        let mut world = PhysicsWorld::new();
+        assert_eq!(world.static_colliders().len(), 0);
 
-        assert_eq!(world.floor_material, PhysicsMaterial::METAL);
+        world.add_static_collider(StaticCollider::floor(0.0, PhysicsMaterial::CONCRETE));
+        assert_eq!(world.static_colliders().len(), 1);
+
+        // Add a wall
+        world.add_static_collider(StaticCollider::plane(
+            Vec4::new(1.0, 0.0, 0.0, 0.0),  // Normal pointing +X
+            0.0,
+            PhysicsMaterial::METAL,
+        ));
+        assert_eq!(world.static_colliders().len(), 2);
+    }
+
+    #[test]
+    fn test_multiple_static_colliders() {
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(-10.0));
+
+        // Floor at Y = 0
+        world.add_static_collider(StaticCollider::floor(0.0, PhysicsMaterial::CONCRETE));
+
+        // Ceiling at Y = 10 (normal pointing down)
+        world.add_static_collider(StaticCollider::plane(
+            Vec4::new(0.0, -1.0, 0.0, 0.0),
+            -10.0,
+            PhysicsMaterial::METAL,
+        ));
+
+        // Ball in the middle
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 5.0, 0.0, 0.0), 0.5);
+        world.add_body(body);
+
+        // Step simulation - ball should bounce between floor and ceiling
+        for _ in 0..1000 {
+            world.step(0.016);
+        }
+
+        // Ball should still be between 0 and 10
+        let ball = world.bodies.values().next().unwrap();
+        assert!(ball.position.y >= 0.0 && ball.position.y <= 10.0,
+            "Ball should be between floor and ceiling, got y={}", ball.position.y);
     }
 }
