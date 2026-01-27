@@ -45,8 +45,10 @@ impl Scene {
 
     /// Load a scene from a RON file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, SceneLoadError> {
-        let contents = fs::read_to_string(path)?;
-        let scene = ron::from_str(&contents)?;
+        let contents = fs::read_to_string(path.as_ref())?;
+        let scene: Scene = ron::from_str(&contents)?;
+        log::debug!("Loaded scene '{}' with gravity={:?}, player_spawn={:?}",
+            scene.name, scene.gravity, scene.player_spawn);
         Ok(scene)
     }
 
@@ -223,12 +225,17 @@ impl ActiveScene {
     ///
     /// The `player_radius` parameter sets the collision radius for the player body.
     pub fn from_template(template: &Scene, physics_config: Option<PhysicsConfig>, player_radius: f32) -> Self {
+        log::debug!("from_template: physics_config={:?}, template.gravity={:?}", physics_config, template.gravity);
+
         // Create world with physics
         let mut world = if let Some(config) = physics_config {
+            log::debug!("Using provided physics_config with gravity={}", config.gravity);
             World::new().with_physics(config)
         } else if let Some(gravity) = template.gravity {
+            log::debug!("Using template gravity={}", gravity);
             World::new().with_physics(PhysicsConfig::new(gravity))
         } else {
+            log::debug!("No physics configured");
             World::new()
         };
 
@@ -240,9 +247,15 @@ impl ActiveScene {
 
             if let Some(physics) = world.physics_mut() {
                 if is_static {
-                    // Create static collider for floor/walls
-                    if let ShapeTemplate::Hyperplane { y, .. } = &entity_template.shape {
-                        physics.add_static_collider(StaticCollider::floor(*y, PhysicsMaterial::CONCRETE));
+                    // Create bounded static collider for floor/walls (objects can fall off edges)
+                    if let ShapeTemplate::Hyperplane { y, size, cell_size, thickness, .. } = &entity_template.shape {
+                        physics.add_static_collider(StaticCollider::floor_bounded(
+                            *y,
+                            *size,      // X/Z extent from hyperplane
+                            *cell_size, // W extent
+                            *thickness, // Y thickness
+                            PhysicsMaterial::CONCRETE,
+                        ));
                     }
                 } else if is_dynamic {
                     // Create dynamic rigid body for movable objects

@@ -240,6 +240,40 @@ impl StaticCollider {
         }
     }
 
+    /// Create a bounded floor platform using AABB collision
+    ///
+    /// Objects can fall off the edges of this platform.
+    /// The floor surface is at Y height `y`, with the collider extending downward.
+    ///
+    /// # Parameters
+    /// - `y`: Y height of floor surface (top of AABB)
+    /// - `half_size_xz`: Half-extent in X and Z dimensions
+    /// - `half_size_w`: Half-extent in W dimension
+    /// - `thickness`: Thickness in Y (minimum 0.1 enforced to prevent tunneling)
+    /// - `material`: Physics material for friction and restitution
+    pub fn floor_bounded(
+        y: f32,
+        half_size_xz: f32,
+        half_size_w: f32,
+        thickness: f32,
+        material: PhysicsMaterial,
+    ) -> Self {
+        use crate::shapes::AABB4D;
+
+        let actual_thickness = thickness.max(0.1);
+        let half_thickness = actual_thickness / 2.0;
+
+        // Position AABB so top surface is at y
+        let center = Vec4::new(0.0, y - half_thickness, 0.0, 0.0);
+        let half_extents = Vec4::new(half_size_xz, half_thickness, half_size_xz, half_size_w);
+
+        Self {
+            collider: Collider::AABB(AABB4D::from_center_half_extents(center, half_extents)),
+            material,
+            filter: CollisionFilter::static_world(),
+        }
+    }
+
     /// Create an AABB static collider
     pub fn aabb(center: Vec4, half_extents: Vec4, material: PhysicsMaterial) -> Self {
         use crate::shapes::AABB4D;
@@ -409,5 +443,63 @@ mod tests {
             .with_filter(CollisionFilter::trigger(CollisionLayer::PLAYER));
 
         assert_eq!(collider.filter.layer, CollisionLayer::TRIGGER);
+    }
+
+    // ===== Bounded Floor Tests =====
+
+    #[test]
+    fn test_floor_bounded_creates_aabb() {
+        use crate::shapes::Collider;
+        let collider = StaticCollider::floor_bounded(
+            0.0,   // y: floor surface at y=0
+            10.0,  // half_size_xz
+            5.0,   // half_size_w
+            1.0,   // thickness
+            PhysicsMaterial::CONCRETE,
+        );
+
+        // Should be an AABB, not a plane
+        match &collider.collider {
+            Collider::AABB(aabb) => {
+                // Top surface should be at y=0
+                assert_eq!(aabb.max.y, 0.0);
+                // Bottom should be at y=-1.0 (thickness=1.0)
+                assert_eq!(aabb.min.y, -1.0);
+                // X/Z extents should be -10 to +10
+                assert_eq!(aabb.min.x, -10.0);
+                assert_eq!(aabb.max.x, 10.0);
+                assert_eq!(aabb.min.z, -10.0);
+                assert_eq!(aabb.max.z, 10.0);
+                // W extent should be -5 to +5
+                assert_eq!(aabb.min.w, -5.0);
+                assert_eq!(aabb.max.w, 5.0);
+            }
+            _ => panic!("Expected AABB collider from floor_bounded"),
+        }
+
+        assert_eq!(collider.filter, CollisionFilter::static_world());
+    }
+
+    #[test]
+    fn test_floor_bounded_minimum_thickness() {
+        use crate::shapes::Collider;
+        // Thickness below 0.1 should be clamped to 0.1
+        let collider = StaticCollider::floor_bounded(
+            5.0,   // y: floor surface at y=5
+            1.0,   // half_size_xz
+            1.0,   // half_size_w
+            0.01,  // thickness (too thin, should be clamped to 0.1)
+            PhysicsMaterial::RUBBER,
+        );
+
+        match &collider.collider {
+            Collider::AABB(aabb) => {
+                // Top surface at y=5
+                assert_eq!(aabb.max.y, 5.0);
+                // Bottom should be at y=4.9 (minimum thickness 0.1)
+                assert!((aabb.min.y - 4.9).abs() < 0.001);
+            }
+            _ => panic!("Expected AABB collider"),
+        }
     }
 }
