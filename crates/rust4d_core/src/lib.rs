@@ -17,12 +17,14 @@ mod entity;
 mod world;
 mod shapes;
 mod scene;
+mod scene_manager;
 
 pub use transform::Transform4D;
 pub use entity::{Material, Entity, ShapeRef, DirtyFlags, EntityTemplate};
 pub use world::{World, EntityKey};
 pub use shapes::ShapeTemplate;
-pub use scene::{Scene, SceneLoadError, SceneSaveError};
+pub use scene::{Scene, SceneLoadError, SceneSaveError, SceneError, ActiveScene};
+pub use scene_manager::SceneManager;
 
 // Re-export commonly used types from rust4d_math for convenience
 pub use rust4d_math::{Vec4, Rotor4, RotationPlane, ConvexShape4D, Tetrahedron};
