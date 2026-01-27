@@ -1,0 +1,68 @@
+// Test Chamber - Multiple tesseracts for physics testing
+Scene(
+    name: "Test Chamber",
+    entities: [
+        EntityTemplate(
+            name: Some("floor"),
+            tags: ["static"],
+            transform: Transform4D(
+                position: Vec4(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
+                rotation: (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                scale: 1.0,
+            ),
+            shape: ShapeTemplate(
+                type: "Hyperplane",
+                y: 0.0,
+                size: 20.0,
+                subdivisions: 20,
+                cell_size: 2.0,
+                thickness: 0.001,
+            ),
+            material: Material(base_color: (0.4, 0.4, 0.45, 1.0)),
+        ),
+        EntityTemplate(
+            name: Some("tesseract_red"),
+            tags: ["dynamic"],
+            transform: Transform4D(
+                position: Vec4(x: -3.0, y: 3.0, z: 0.0, w: 0.0),
+                rotation: (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                scale: 1.0,
+            ),
+            shape: ShapeTemplate(
+                type: "Tesseract",
+                size: 1.5,
+            ),
+            material: Material(base_color: (1.0, 0.3, 0.3, 1.0)),
+        ),
+        EntityTemplate(
+            name: Some("tesseract_blue"),
+            tags: ["dynamic"],
+            transform: Transform4D(
+                position: Vec4(x: 3.0, y: 3.0, z: 0.0, w: 0.0),
+                rotation: (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                scale: 1.0,
+            ),
+            shape: ShapeTemplate(
+                type: "Tesseract",
+                size: 1.5,
+            ),
+            material: Material(base_color: (0.3, 0.3, 1.0, 1.0)),
+        ),
+        EntityTemplate(
+            name: Some("tesseract_green"),
+            tags: ["dynamic"],
+            transform: Transform4D(
+                position: Vec4(x: 0.0, y: 5.0, z: 0.0, w: 2.0),
+                rotation: (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                scale: 1.0,
+            ),
+            shape: ShapeTemplate(
+                type: "Tesseract",
+                size: 3.0,
+            ),
+            material: Material(base_color: (0.3, 1.0, 0.3, 1.0)),
+        ),
+    ],
+    gravity: Some(-20.0),
+    player_spawn: Some((0.0, 2.0, 10.0, 0.0)),
+)
