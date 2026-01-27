@@ -1,5 +1,6 @@
 //! Rigid body types for 4D physics simulation
 
+use crate::material::PhysicsMaterial;
 use crate::shapes::Collider;
 use rust4d_math::Vec4;
 use slotmap::new_key_type;
@@ -23,8 +24,8 @@ pub struct RigidBody4D {
     pub velocity: Vec4,
     /// Mass of the body (used for push calculations)
     pub mass: f32,
-    /// Coefficient of restitution (bounciness, 0.0 = no bounce, 1.0 = perfect bounce)
-    pub restitution: f32,
+    /// Physical material properties (friction and restitution)
+    pub material: PhysicsMaterial,
     /// Whether this body is affected by gravity
     pub affected_by_gravity: bool,
     /// The collision shape for this body (stores absolute world position)
@@ -41,7 +42,7 @@ impl RigidBody4D {
             position,
             velocity: Vec4::ZERO,
             mass: 1.0,
-            restitution: 0.0,
+            material: PhysicsMaterial::default(),
             affected_by_gravity: true,
             collider: Collider::Sphere(Sphere4D::new(position, radius)),
             is_static: false,
@@ -55,7 +56,7 @@ impl RigidBody4D {
             position,
             velocity: Vec4::ZERO,
             mass: 1.0,
-            restitution: 0.0,
+            material: PhysicsMaterial::default(),
             affected_by_gravity: true,
             collider: Collider::AABB(AABB4D::from_center_half_extents(position, half_extents)),
             is_static: false,
@@ -82,9 +83,18 @@ impl RigidBody4D {
         self
     }
 
+    /// Set the physics material for this body
+    pub fn with_material(mut self, material: PhysicsMaterial) -> Self {
+        self.material = material;
+        self
+    }
+
     /// Set the restitution (bounciness) of this body
+    ///
+    /// This is a convenience method that updates the material's restitution.
+    /// For full control over friction and restitution, use `with_material()`.
     pub fn with_restitution(mut self, restitution: f32) -> Self {
-        self.restitution = restitution.clamp(0.0, 1.0);
+        self.material.restitution = restitution.clamp(0.0, 1.0);
         self
     }
 
@@ -129,7 +139,7 @@ mod tests {
         assert_eq!(body.position, pos);
         assert_eq!(body.velocity, Vec4::ZERO);
         assert_eq!(body.mass, 1.0);
-        assert_eq!(body.restitution, 0.0);
+        assert_eq!(body.material, PhysicsMaterial::default());
         assert!(body.affected_by_gravity);
         assert!(!body.is_static);
 
@@ -166,17 +176,25 @@ mod tests {
 
         assert_eq!(body.velocity, Vec4::new(1.0, 2.0, 0.0, 0.0));
         assert_eq!(body.mass, 5.0);
-        assert_eq!(body.restitution, 0.8);
+        assert_eq!(body.material.restitution, 0.8);
         assert!(!body.affected_by_gravity);
     }
 
     #[test]
     fn test_restitution_clamping() {
         let body = RigidBody4D::new_sphere(Vec4::ZERO, 1.0).with_restitution(1.5);
-        assert_eq!(body.restitution, 1.0);
+        assert_eq!(body.material.restitution, 1.0);
 
         let body = RigidBody4D::new_sphere(Vec4::ZERO, 1.0).with_restitution(-0.5);
-        assert_eq!(body.restitution, 0.0);
+        assert_eq!(body.material.restitution, 0.0);
+    }
+
+    #[test]
+    fn test_with_material() {
+        let body = RigidBody4D::new_sphere(Vec4::ZERO, 1.0)
+            .with_material(PhysicsMaterial::RUBBER);
+
+        assert_eq!(body.material, PhysicsMaterial::RUBBER);
     }
 
     #[test]

@@ -147,7 +147,7 @@ impl PhysicsWorld {
                     let velocity_along_normal = body.velocity.dot(contact.normal);
                     if velocity_along_normal < 0.0 {
                         // Body is moving into the floor
-                        let restitution = body.restitution.max(self.config.restitution);
+                        let restitution = body.material.restitution.max(self.config.restitution);
 
                         // Remove the normal component of velocity and optionally bounce
                         let normal_velocity = contact.normal * velocity_along_normal;
@@ -277,7 +277,7 @@ impl PhysicsWorld {
         if !is_static_a {
             let vel_along_normal = self.bodies[key_a].velocity.dot(-contact.normal);
             if vel_along_normal < 0.0 {
-                let restitution = self.bodies[key_a].restitution.max(self.config.restitution);
+                let restitution = self.bodies[key_a].material.restitution.max(self.config.restitution);
                 let normal_velocity = -contact.normal * vel_along_normal;
                 self.bodies[key_a].velocity = self.bodies[key_a].velocity - normal_velocity * (1.0 + restitution);
             }
@@ -286,7 +286,7 @@ impl PhysicsWorld {
         if !is_static_b {
             let vel_along_normal = self.bodies[key_b].velocity.dot(contact.normal);
             if vel_along_normal < 0.0 {
-                let restitution = self.bodies[key_b].restitution.max(self.config.restitution);
+                let restitution = self.bodies[key_b].material.restitution.max(self.config.restitution);
                 let normal_velocity = contact.normal * vel_along_normal;
                 self.bodies[key_b].velocity = self.bodies[key_b].velocity - normal_velocity * (1.0 + restitution);
             }
