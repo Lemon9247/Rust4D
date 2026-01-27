@@ -12,9 +12,9 @@ use winit::{
 };
 
 use rust4d_core::{
-    World, Entity, EntityHandle, ShapeRef, Material,
+    World, Entity, EntityKey, ShapeRef, Material,
     Tesseract4D, Hyperplane4D,
-    PhysicsConfig, RigidBody4D, BodyHandle,
+    PhysicsConfig, RigidBody4D, BodyKey,
 };
 use rust4d_render::{
     context::RenderContext,
@@ -44,10 +44,10 @@ struct App {
     player_physics: PlayerPhysics,
     /// Floor plane for player physics collision
     physics_floor: PhysicsPlane,
-    /// Handle to the tesseract entity (for physics body access)
-    tesseract_entity: EntityHandle,
-    /// Handle to the tesseract's physics body
-    tesseract_body: BodyHandle,
+    /// Key to the tesseract entity (for physics body access)
+    tesseract_entity: EntityKey,
+    /// Key to the tesseract's physics body
+    tesseract_body: BodyKey,
     /// Last known tesseract position (for dirty detection)
     last_tesseract_pos: Vec4,
 }
@@ -90,7 +90,7 @@ impl App {
         ));
 
         // Build GPU geometry from the world
-        let geometry = Self::build_geometry(&world);
+        let geometry = Self::build_geometry(&world, tesseract_entity);
 
         log::info!("World created with {} entities", world.entity_count());
         log::info!("Total geometry: {} vertices, {} tetrahedra",
@@ -128,7 +128,7 @@ impl App {
     }
 
     /// Build GPU geometry from the world using custom coloring
-    fn build_geometry(world: &World) -> RenderableGeometry {
+    fn build_geometry(world: &World, tesseract_key: EntityKey) -> RenderableGeometry {
         let mut geometry = RenderableGeometry::new();
 
         // Checkerboard pattern for the floor
@@ -138,8 +138,8 @@ impl App {
             2.0, // Cell size
         );
 
-        for (idx, entity) in world.iter().enumerate() {
-            if idx == 0 {
+        for (key, entity) in world.iter_with_keys() {
+            if key == tesseract_key {
                 // Tesseract: use position gradient
                 geometry.add_entity_with_color(entity, &position_gradient_color);
             } else {
@@ -379,7 +379,7 @@ impl ApplicationHandler for App {
                     if current_pos != self.last_tesseract_pos {
                         self.last_tesseract_pos = current_pos;
                         // Rebuild geometry with new transforms
-                        self.geometry = Self::build_geometry(&self.world);
+                        self.geometry = Self::build_geometry(&self.world, self.tesseract_entity);
                         // Re-upload to GPU
                         if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
                             slice_pipeline.upload_tetrahedra(
