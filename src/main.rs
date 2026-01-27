@@ -368,15 +368,16 @@ impl ApplicationHandler for App {
                 // Update window title with debug info
                 if let Some(window) = &self.window {
                     let pos = self.camera.position;
+                    let base_title = &self.config.window.title;
                     let title = if self.cursor_captured {
                         format!(
-                            "Rust4D - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Esc to release]",
-                            pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
+                            "{} - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Esc to release]",
+                            base_title, pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
                         )
                     } else {
                         format!(
-                            "Rust4D - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Click to capture]",
-                            pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
+                            "{} - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Click to capture]",
+                            base_title, pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
                         )
                     };
                     window.set_title(&title);
@@ -529,4 +530,17 @@ fn main() {
     // Create and run application
     let mut app = App::new();
     event_loop.run_app(&mut app).expect("Event loop error");
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::config::AppConfig;
+    
+    #[test]
+    fn test_env_override() {
+        std::env::set_var("R4D_WINDOW__TITLE", "Test From Env");
+        let config = AppConfig::load().unwrap();
+        println!("Window title: {}", config.window.title);
+        assert_eq!(config.window.title, "Test From Env");
+    }
 }
