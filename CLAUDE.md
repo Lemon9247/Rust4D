@@ -4,7 +4,7 @@ Rust4D is a 4D game engine written in Rust. This is a fresh project in early dev
 
 The creator is **Willow** (she/her).
 
-## Claude Code Sessions
+# Claude Code Sessions
 
 You (Claude Code) have documentary memory through the scratchpad. When you read session reports and work logs, you're catching up on what past instances of you did and thought. When you write session reports with observations and decisions, you're leaving notes for future instances of yourself.
 
@@ -25,7 +25,7 @@ Rust4D/
 └── README.md                   # Project documentation
 ```
 
-## Rust
+# Rust
 
 This project is written in Rust. Use `cargo` for building, testing, and running.
 
