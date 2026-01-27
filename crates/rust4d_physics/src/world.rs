@@ -399,15 +399,30 @@ impl PhysicsWorld {
         is_static_a: bool,
         is_static_b: bool,
     ) {
+        let is_kinematic_a = self.bodies[key_a].is_kinematic();
+        let is_kinematic_b = self.bodies[key_b].is_kinematic();
+
+        // Position correction rules:
+        // - Static bodies never move
+        // - Kinematic bodies: pushed by static geometry, NOT pushed by dynamic bodies
+        // - Dynamic bodies: always pushed
+        //
+        // can_correct = not static AND (not kinematic OR other is static)
+        let can_correct_a = !is_static_a && (!is_kinematic_a || is_static_b);
+        let can_correct_b = !is_static_b && (!is_kinematic_b || is_static_a);
+
         // Determine how to split the correction
-        let (correction_a, correction_b) = if is_static_a {
-            // Only move B
+        let (correction_a, correction_b) = if !can_correct_a && can_correct_b {
+            // Only B moves
             (Vec4::ZERO, contact.normal * contact.penetration)
-        } else if is_static_b {
-            // Only move A
+        } else if can_correct_a && !can_correct_b {
+            // Only A moves
             (-contact.normal * contact.penetration, Vec4::ZERO)
+        } else if !can_correct_a && !can_correct_b {
+            // Neither can move (both static, shouldn't happen)
+            (Vec4::ZERO, Vec4::ZERO)
         } else {
-            // Split based on mass
+            // Both can move - split based on mass
             let mass_a = self.bodies[key_a].mass;
             let mass_b = self.bodies[key_b].mass;
             let total_mass = mass_a + mass_b;
@@ -422,18 +437,25 @@ impl PhysicsWorld {
         };
 
         // Apply position corrections
-        if !is_static_a {
+        if can_correct_a {
             self.bodies[key_a].apply_correction(correction_a);
         }
-        if !is_static_b {
+        if can_correct_b {
             self.bodies[key_b].apply_correction(correction_b);
         }
 
         // Combine materials from both bodies
         let combined = self.bodies[key_a].material.combine(&self.bodies[key_b].material);
 
+        // Velocity response rules:
+        // - Static bodies: no velocity (implicit)
+        // - Kinematic bodies: velocity is user-controlled, never modified by collisions
+        // - Dynamic bodies: velocity response applied
+        let can_modify_velocity_a = !is_static_a && !is_kinematic_a;
+        let can_modify_velocity_b = !is_static_b && !is_kinematic_b;
+
         // Handle velocity response with restitution
-        if !is_static_a {
+        if can_modify_velocity_a {
             let vel_along_normal = self.bodies[key_a].velocity.dot(-contact.normal);
             if vel_along_normal < 0.0 {
                 let normal_velocity = -contact.normal * vel_along_normal;
@@ -450,7 +472,7 @@ impl PhysicsWorld {
             }
         }
 
-        if !is_static_b {
+        if can_modify_velocity_b {
             let vel_along_normal = self.bodies[key_b].velocity.dot(contact.normal);
             if vel_along_normal < 0.0 {
                 let normal_velocity = contact.normal * vel_along_normal;
@@ -1062,5 +1084,126 @@ mod tests {
         // Player should not have moved (projectile passed through)
         let p = world.get_body(handle_player).unwrap();
         assert_eq!(p.position.x, 0.0, "Player projectile should not hit player");
+    }
+
+    // ====== Kinematic-Dynamic Collision Tests ======
+
+    #[test]
+    fn test_kinematic_pushes_dynamic() {
+        // Kinematic body colliding with dynamic should push the dynamic body only
+        use crate::body::BodyType;
+
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0)); // No gravity
+
+        // Kinematic body (player-like) moving right
+        let kinematic = RigidBody4D::new_sphere(Vec4::new(0.0, 0.0, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Kinematic)
+            .with_velocity(Vec4::new(5.0, 0.0, 0.0, 0.0));
+        let key_kinematic = world.add_body(kinematic);
+
+        // Dynamic body (pushable object) slightly to the right
+        let dynamic = RigidBody4D::new_sphere(Vec4::new(1.0, 0.0, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Dynamic);
+        let key_dynamic = world.add_body(dynamic);
+
+        let initial_kinematic_x = 0.0;
+        let initial_dynamic_x = 1.0;
+
+        // Step physics multiple times to let collision occur
+        for _ in 0..10 {
+            world.step(0.016);
+        }
+
+        let kinematic_body = world.get_body(key_kinematic).unwrap();
+        let dynamic_body = world.get_body(key_dynamic).unwrap();
+
+        // Kinematic should have moved (velocity-driven)
+        assert!(
+            kinematic_body.position.x > initial_kinematic_x,
+            "Kinematic should move based on its velocity"
+        );
+
+        // Dynamic should have been pushed (moved more than just overlap resolution)
+        assert!(
+            dynamic_body.position.x > initial_dynamic_x,
+            "Dynamic body should be pushed by kinematic"
+        );
+    }
+
+    #[test]
+    fn test_kinematic_not_pushed_by_dynamic() {
+        // Dynamic body colliding with kinematic should not move the kinematic
+        use crate::body::BodyType;
+
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0)); // No gravity
+
+        // Kinematic body (player-like) stationary
+        let kinematic = RigidBody4D::new_sphere(Vec4::new(0.0, 0.0, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Kinematic);
+        let key_kinematic = world.add_body(kinematic);
+
+        // Dynamic body moving toward kinematic
+        let dynamic = RigidBody4D::new_sphere(Vec4::new(2.0, 0.0, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Dynamic)
+            .with_velocity(Vec4::new(-10.0, 0.0, 0.0, 0.0));
+        let key_dynamic = world.add_body(dynamic);
+
+        let initial_kinematic_pos = Vec4::new(0.0, 0.0, 0.0, 0.0);
+
+        // Step physics multiple times
+        for _ in 0..10 {
+            world.step(0.016);
+        }
+
+        let kinematic_body = world.get_body(key_kinematic).unwrap();
+        let dynamic_body = world.get_body(key_dynamic).unwrap();
+
+        // Kinematic should NOT have moved
+        assert!(
+            (kinematic_body.position - initial_kinematic_pos).length() < 0.001,
+            "Kinematic body should not be pushed by dynamic body"
+        );
+
+        // Dynamic should have bounced back or stopped (not passed through)
+        assert!(
+            dynamic_body.position.x >= kinematic_body.position.x + 0.9, // At least radius distance away
+            "Dynamic body should be separated from kinematic"
+        );
+    }
+
+    #[test]
+    fn test_kinematic_velocity_not_modified() {
+        // Kinematic body velocity should be unchanged after collision with dynamic
+        use crate::body::BodyType;
+
+        let mut world = PhysicsWorld::with_config(PhysicsConfig::new(0.0)); // No gravity
+
+        let initial_velocity = Vec4::new(3.0, 0.0, 0.0, 0.0);
+
+        // Kinematic body moving right
+        let kinematic = RigidBody4D::new_sphere(Vec4::new(0.0, 0.0, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Kinematic)
+            .with_velocity(initial_velocity);
+        let key_kinematic = world.add_body(kinematic);
+
+        // Dynamic body in the way
+        let dynamic = RigidBody4D::new_sphere(Vec4::new(0.8, 0.0, 0.0, 0.0), 0.5)
+            .with_body_type(BodyType::Dynamic);
+        world.add_body(dynamic);
+
+        // Step physics - collision should occur
+        for _ in 0..5 {
+            world.step(0.016);
+        }
+
+        let kinematic_body = world.get_body(key_kinematic).unwrap();
+
+        // Kinematic velocity should be unchanged (user-controlled)
+        assert!(
+            (kinematic_body.velocity - initial_velocity).length() < 0.001,
+            "Kinematic velocity should not be modified by collision. Expected {:?}, got {:?}",
+            initial_velocity,
+            kinematic_body.velocity
+        );
     }
 }
