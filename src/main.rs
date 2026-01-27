@@ -318,24 +318,31 @@ impl ApplicationHandler for App {
                     self.world.clear_all_dirty();
                 }
 
-                // 7. Sync camera position to player physics
+                // 7. Sync camera XYZ position to player physics (preserve W for 4D navigation)
+                let camera_w = self.camera.position.w;
                 if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
-                    self.camera.position = pos;
+                    self.camera.position.x = pos.x;
+                    self.camera.position.y = pos.y;
+                    self.camera.position.z = pos.z;
+                    // W is controlled by player input, not physics
                 }
 
                 // 8. Apply W movement (4D navigation - not affected by physics)
-                self.camera.position.w += w_input * self.controller.w_move_speed * dt;
+                self.camera.position.w = camera_w + w_input * self.controller.w_move_speed * dt;
 
-                // 9. Apply mouse look for camera rotation (rotation only, position already set)
-                // We need to handle rotation separately since controller.update() also moves
-                // For now, call update but we've already set position, so rotation will apply
+                // 9. Apply mouse look for camera rotation only
+                // Note: controller.update() also applies movement which we don't want,
+                // but we re-sync position below to discard the unwanted movement
+                let camera_w = self.camera.position.w;
                 self.controller.update(&mut self.camera, dt, self.cursor_captured);
 
-                // 10. Re-sync position after controller (it may have moved it)
+                // 10. Re-sync XYZ position after controller (discard its movement, keep rotation)
                 if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
-                    self.camera.position = pos;
+                    self.camera.position.x = pos.x;
+                    self.camera.position.y = pos.y;
+                    self.camera.position.z = pos.z;
                 }
-                self.camera.position.w += w_input * self.controller.w_move_speed * dt;
+                self.camera.position.w = camera_w;
 
                 // Update window title with debug info
                 if let Some(window) = &self.window {
