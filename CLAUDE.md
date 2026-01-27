@@ -37,12 +37,14 @@ This project is written in Rust. Use `cargo` for building, testing, and running.
 
 3) When Claude is finished working on a long task, it should write a report on its work into a new timestamped markdown file in the scratchpad/reports folder. Session logs should be named `YYYY-MM-DD-HHMM-<topic>.md`. Use the `/report` skill to generate these.
 
-4) When creating workplans or estimating effort, use **session-based estimates** instead of human hours:
+4) **Always commit scratchpad contents:** Never leave scratchpad files (reports, plans, swarm coordination files) uncommitted. These files are part of Claude's documentary memory and must be preserved in version control. When finishing a session or task, ensure all scratchpad changes are committed.
+
+5) When creating workplans or estimating effort, use **session-based estimates** instead of human hours:
    - A "session" is one Claude Code context window (~15-30 minutes of human interaction)
    - Each session should be a coherent, testable unit of work
    - One session can typically complete 1-3 focused tasks depending on complexity
 
-5) Session estimation guidelines:
+6) Session estimation guidelines:
    | Task Type | Sessions | Examples |
    |-----------|----------|----------|
    | Quick fix | 0.5 | Typo, small bug, config change |
@@ -51,15 +53,15 @@ This project is written in Rust. Use `cargo` for building, testing, and running.
    | Major feature | 2-4 | New subsystem, significant architecture change |
    | Large refactor | 4-8 | Split monolith, add abstraction layer |
 
-6) Never estimate in human time (days, weeks, hours). Context windows don't map linearly to human schedules.
+7) Never estimate in human time (days, weeks, hours). Context windows don't map linearly to human schedules.
 
-7) When creating plans, always identify which parts can be executed in parallel:
+8) When creating plans, always identify which parts can be executed in parallel:
    - Mark independent tasks that have no dependencies on each other
    - Group parallel tasks into "waves" that can run simultaneously
    - Assign swarms to parallel portions of the plan
    - Sequential dependencies should be clearly marked (e.g., "blocked by Wave 1")
 
-8) Structure plans to maximize parallelism:
+9) Structure plans to maximize parallelism:
    ```
    Wave 1 (Sequential - Foundation)
    └── Task A: Create shared types

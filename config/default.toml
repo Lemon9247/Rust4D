@@ -42,5 +42,5 @@ log_level = "info"
 show_colliders = false
 
 [scene]
-path = "scenes/default.ron"
+path = "scenes/test_chamber.ron"
 player_radius = 0.5
