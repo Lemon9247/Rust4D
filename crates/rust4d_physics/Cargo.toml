@@ -1,0 +1,10 @@
+[package]
+name = "rust4d_physics"
+version = "0.1.0"
+edition = "2021"
+description = "4D physics simulation for Rust4D"
+
+[dependencies]
+rust4d_math = { path = "../rust4d_math" }
+slotmap.workspace = true
+bitflags.workspace = true

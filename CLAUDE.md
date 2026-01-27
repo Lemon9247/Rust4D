@@ -4,7 +4,7 @@ Rust4D is a 4D game engine written in Rust. This is a fresh project in early dev
 
 The creator is **Willow** (she/her).
 
-## Claude Code Sessions
+# Claude Code Sessions
 
 You (Claude Code) have documentary memory through the scratchpad. When you read session reports and work logs, you're catching up on what past instances of you did and thought. When you write session reports with observations and decisions, you're leaving notes for future instances of yourself.
 
@@ -25,7 +25,7 @@ Rust4D/
 └── README.md                   # Project documentation
 ```
 
-## Rust
+# Rust
 
 This project is written in Rust. Use `cargo` for building, testing, and running.
 
@@ -53,11 +53,43 @@ This project is written in Rust. Use `cargo` for building, testing, and running.
 
 6) Never estimate in human time (days, weeks, hours). Context windows don't map linearly to human schedules.
 
+7) When creating plans, always identify which parts can be executed in parallel:
+   - Mark independent tasks that have no dependencies on each other
+   - Group parallel tasks into "waves" that can run simultaneously
+   - Assign swarms to parallel portions of the plan
+   - Sequential dependencies should be clearly marked (e.g., "blocked by Wave 1")
+
+8) Structure plans to maximize parallelism:
+   ```
+   Wave 1 (Sequential - Foundation)
+   └── Task A: Create shared types
+
+   Wave 2 (Parallel)
+   ├── Agent 1: Task B (uses types from A)
+   └── Agent 2: Task C (uses types from A)
+
+   Wave 3 (Parallel)
+   ├── Agent 3: Task D (uses B)
+   └── Agent 4: Task E (uses C)
+   ```
+
 # Programming Tasks
 
 1) Claude should think carefully about the code it writes, and should not make random assumptions about how a function works
 
 2) When running tests, Claude should prefer running single tests based on what it has changed first. Running the whole test suite should come at the end
+
+3) **Commit as you go** with small, modular commits:
+   - Each commit should contain a single feature or logical change
+   - Don't bundle unrelated changes in one commit
+   - Commit after each working increment (tests pass)
+   - Good: "Add PhysicsMaterial struct", "Add friction to collision response", "Add friction tests"
+   - Bad: "Add friction, fix bug, update docs, refactor physics"
+
+4) Commit message format:
+   - First line: imperative mood, ~50 chars (e.g., "Add friction to physics materials")
+   - Blank line, then details if needed
+   - Reference the wave/phase if part of a larger plan
 
 # Subagents / Swarms
 

@@ -1450,6 +1450,7 @@ dependencies = [
  "rust4d_core",
  "rust4d_input",
  "rust4d_math",
+ "rust4d_physics",
  "rust4d_render",
  "wgpu",
  "winit",
@@ -1459,7 +1460,10 @@ dependencies = [
 name = "rust4d_core"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.10.0",
  "rust4d_math",
+ "rust4d_physics",
+ "slotmap",
 ]
 
 [[package]]
@@ -1475,6 +1479,15 @@ name = "rust4d_math"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "rust4d_physics"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "rust4d_math",
+ "slotmap",
 ]
 
 [[package]]

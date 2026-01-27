@@ -2,6 +2,8 @@
 //!
 //! A 4D rendering engine that displays 3D cross-sections of 4D geometry.
 
+mod scene;
+
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
@@ -11,10 +13,7 @@ use winit::{
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
-use rust4d_core::{
-    World, Entity, ShapeRef, Material,
-    Tesseract4D, Hyperplane4D,
-};
+use rust4d_core::World;
 use rust4d_render::{
     context::RenderContext,
     camera4d::Camera4D,
@@ -22,6 +21,10 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
+use rust4d_physics::PhysicsMaterial;
+use rust4d_math::Vec4;
+
+use scene::SceneBuilder;
 
 /// Main application state
 struct App {
@@ -29,7 +32,7 @@ struct App {
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
     render_pipeline: Option<RenderPipeline>,
-    /// The 4D world containing all entities
+    /// The 4D world containing all entities (with physics enabled)
     world: World,
     /// Cached GPU geometry (rebuilt when world changes)
     geometry: RenderableGeometry,
@@ -39,24 +42,22 @@ struct App {
     cursor_captured: bool,
 }
 
+/// Gravity constant for physics
+const GRAVITY: f32 = -20.0;
+
+/// Floor Y position for physics
+const FLOOR_Y: f32 = -2.0;
+
 impl App {
     fn new() -> Self {
-        // Create the world
-        let mut world = World::with_capacity(2);
-
-        // Add tesseract entity with position-based gradient coloring
-        let tesseract = Tesseract4D::new(2.0);
-        world.add_entity(Entity::with_material(
-            ShapeRef::shared(tesseract),
-            Material::WHITE, // Will be overridden by position gradient
-        ));
-
-        // Add checkerboard floor entity
-        let floor = Hyperplane4D::new(-2.0, 10.0, 10, 5.0, 0.001);
-        world.add_entity(Entity::with_material(
-            ShapeRef::shared(floor),
-            Material::GRAY, // Will be overridden by checkerboard
-        ));
+        // Build the scene using SceneBuilder
+        let player_start = Vec4::new(0.0, 0.0, 5.0, 0.0);
+        let world = SceneBuilder::with_capacity(2)
+            .with_physics(GRAVITY)
+            .add_floor(FLOOR_Y, 10.0, PhysicsMaterial::CONCRETE)
+            .add_player(player_start, 0.5)
+            .add_tesseract(Vec4::ZERO, 2.0, "tesseract")
+            .build();
 
         // Build GPU geometry from the world
         let geometry = Self::build_geometry(&world);
@@ -65,6 +66,10 @@ impl App {
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());
 
+        // Set camera to player start position
+        let mut camera = Camera4D::new();
+        camera.position = player_start;
+
         Self {
             window: None,
             render_context: None,
@@ -72,7 +77,7 @@ impl App {
             render_pipeline: None,
             world,
             geometry,
-            camera: Camera4D::new(),
+            camera,
             controller: CameraController::new(),
             last_frame: std::time::Instant::now(),
             cursor_captured: false,
@@ -90,12 +95,12 @@ impl App {
             2.0, // Cell size
         );
 
-        for (idx, entity) in world.iter().enumerate() {
-            if idx == 0 {
-                // Tesseract: use position gradient
+        for (_key, entity) in world.iter_with_keys() {
+            if entity.has_tag("dynamic") {
+                // Dynamic entities (tesseract): use position gradient
                 geometry.add_entity_with_color(entity, &position_gradient_color);
             } else {
-                // Floor: use checkerboard pattern
+                // Static entities (floor): use checkerboard pattern
                 geometry.add_entity_with_color(entity, &|v, _m| {
                     checkerboard.color_for_position(v.x, v.z)
                 });
@@ -264,11 +269,80 @@ impl ApplicationHandler for App {
                 let dt = (now - self.last_frame).as_secs_f32();
                 self.last_frame = now;
 
-                // Update world (future: physics)
+                // === PHYSICS-BASED GAME LOOP ===
+
+                // 1. Get movement input from controller
+                let (forward_input, right_input) = self.controller.get_movement_input();
+                let w_input = self.controller.get_w_input();
+
+                // 2. Calculate movement direction in world space using camera orientation
+                // Get camera forward/right projected onto XZ plane (horizontal movement only)
+                let camera_forward = self.camera.forward();
+                let camera_right = self.camera.right();
+
+                // Project to XZ plane (zero out Y for horizontal movement)
+                let forward_xz = Vec4::new(camera_forward.x, 0.0, camera_forward.z, 0.0).normalized();
+                let right_xz = Vec4::new(camera_right.x, 0.0, camera_right.z, 0.0).normalized();
+
+                // Combine movement direction
+                let move_dir = forward_xz * forward_input + right_xz * right_input;
+
+                // 3. Apply movement to player via unified physics world
+                let move_speed = self.controller.move_speed;
+                if let Some(physics) = self.world.physics_mut() {
+                    physics.apply_player_movement(move_dir * move_speed);
+                }
+
+                // 4. Handle jump
+                if self.controller.consume_jump() {
+                    if let Some(physics) = self.world.physics_mut() {
+                        physics.player_jump();
+                    }
+                }
+
+                // 5. Step world physics (tesseract + player dynamics) and sync entity transforms
                 self.world.update(dt);
 
-                // Update camera
-                let _pos = self.controller.update(&mut self.camera, dt, self.cursor_captured);
+                // 6. Check for dirty entities and rebuild geometry if needed
+                if self.world.has_dirty_entities() {
+                    // Rebuild geometry with new transforms
+                    self.geometry = Self::build_geometry(&self.world);
+                    // Re-upload to GPU
+                    if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
+                        slice_pipeline.upload_tetrahedra(
+                            &ctx.device,
+                            &self.geometry.vertices,
+                            &self.geometry.tetrahedra,
+                        );
+                    }
+                    self.world.clear_all_dirty();
+                }
+
+                // 7. Sync camera XYZ position to player physics (preserve W for 4D navigation)
+                let camera_w = self.camera.position.w;
+                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
+                    self.camera.position.x = pos.x;
+                    self.camera.position.y = pos.y;
+                    self.camera.position.z = pos.z;
+                    // W is controlled by player input, not physics
+                }
+
+                // 8. Apply W movement (4D navigation - not affected by physics)
+                self.camera.position.w = camera_w + w_input * self.controller.w_move_speed * dt;
+
+                // 9. Apply mouse look for camera rotation only
+                // Note: controller.update() also applies movement which we don't want,
+                // but we re-sync position below to discard the unwanted movement
+                let camera_w = self.camera.position.w;
+                self.controller.update(&mut self.camera, dt, self.cursor_captured);
+
+                // 10. Re-sync XYZ position after controller (discard its movement, keep rotation)
+                if let Some(pos) = self.world.physics().and_then(|p| p.player_position()) {
+                    self.camera.position.x = pos.x;
+                    self.camera.position.y = pos.y;
+                    self.camera.position.z = pos.z;
+                }
+                self.camera.position.w = camera_w;
 
                 // Update window title with debug info
                 if let Some(window) = &self.window {
