@@ -14,7 +14,7 @@ mod entity;
 mod world;
 
 pub use transform::Transform4D;
-pub use entity::{Material, Entity, ShapeRef};
+pub use entity::{Material, Entity, ShapeRef, DirtyFlags};
 pub use world::{World, EntityKey};
 
 // Re-export commonly used types from rust4d_math for convenience

@@ -8,3 +8,4 @@ description = "Core types for the Rust4D engine: Transform4D, Entity, World"
 rust4d_math.workspace = true
 rust4d_physics.workspace = true
 slotmap.workspace = true
+bitflags.workspace = true
