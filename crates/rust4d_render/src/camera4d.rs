@@ -486,4 +486,5 @@ mod tests {
         assert!(cam.position.y.abs() < EPSILON,
             "W movement should not affect Y, got Y={}", cam.position.y);
     }
+
 }
