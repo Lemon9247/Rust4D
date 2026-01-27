@@ -24,6 +24,9 @@ pub struct CameraController {
     ana: bool,     // Q - move toward +W (ana)
     kata: bool,    // E - move toward -W (kata)
 
+    // Jump state (for physics-based movement)
+    jump_pressed: bool,
+
     // Mouse state
     mouse_pressed: bool,
     w_rotation_mode: bool,  // Right-click held
@@ -61,6 +64,8 @@ impl CameraController {
             ana: false,
             kata: false,
 
+            jump_pressed: false,
+
             mouse_pressed: false,
             w_rotation_mode: false,
             pending_yaw: 0.0,
@@ -89,7 +94,14 @@ impl CameraController {
             KeyCode::KeyD => { self.right = pressed; true }
             KeyCode::KeyQ => { self.ana = pressed; true }
             KeyCode::KeyE => { self.kata = pressed; true }
-            KeyCode::Space => { self.up = pressed; true }
+            KeyCode::Space => {
+                self.up = pressed;
+                // Also track jump for physics mode
+                if pressed {
+                    self.jump_pressed = true;
+                }
+                true
+            }
             KeyCode::ShiftLeft | KeyCode::ShiftRight => { self.down = pressed; true }
             _ => false,
         }
@@ -191,6 +203,35 @@ impl CameraController {
     /// Check if smoothing is enabled
     pub fn is_smoothing_enabled(&self) -> bool {
         self.smoothing_enabled
+    }
+
+    /// Consume the jump input flag
+    ///
+    /// Returns true if jump was pressed since last consume, then clears the flag.
+    /// Use this for physics-based movement where jump should trigger once per press.
+    pub fn consume_jump(&mut self) -> bool {
+        let was_pressed = self.jump_pressed;
+        self.jump_pressed = false;
+        was_pressed
+    }
+
+    /// Get raw movement input for physics-based movement
+    ///
+    /// Returns (forward, right) input values in range -1.0 to 1.0.
+    /// Forward is positive when W is pressed, negative when S is pressed.
+    /// Right is positive when D is pressed, negative when A is pressed.
+    pub fn get_movement_input(&self) -> (f32, f32) {
+        let forward = (self.forward as i32 - self.backward as i32) as f32;
+        let right = (self.right as i32 - self.left as i32) as f32;
+        (forward, right)
+    }
+
+    /// Get W-axis (ana/kata) movement input
+    ///
+    /// Returns input value in range -1.0 to 1.0.
+    /// Positive when Q is pressed (ana), negative when E is pressed (kata).
+    pub fn get_w_input(&self) -> f32 {
+        (self.ana as i32 - self.kata as i32) as f32
     }
 
     /// Builder: set movement speed

@@ -6,9 +6,15 @@
 //! - Rigid body dynamics with gravity
 //! - Player physics for FPS-style movement
 
+pub mod body;
 pub mod collision;
+pub mod player;
 pub mod shapes;
+pub mod world;
 
 // Re-export commonly used types
+pub use body::{BodyHandle, RigidBody4D};
 pub use collision::{aabb_vs_aabb, aabb_vs_plane, sphere_vs_aabb, sphere_vs_plane, Contact};
+pub use player::{PlayerPhysics, DEFAULT_JUMP_VELOCITY, DEFAULT_PLAYER_RADIUS};
 pub use shapes::{Collider, Plane4D, Sphere4D, AABB4D};
+pub use world::{PhysicsConfig, PhysicsWorld};

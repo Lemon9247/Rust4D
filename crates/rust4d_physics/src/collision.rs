@@ -39,15 +39,16 @@ impl Contact {
 /// if sphere is above, opposite if below).
 pub fn sphere_vs_plane(sphere: &Sphere4D, plane: &Plane4D) -> Option<Contact> {
     let signed_dist = plane.signed_distance(sphere.center);
-    let penetration = sphere.radius - signed_dist.abs();
+
+    // Penetration calculation:
+    // - If signed_dist > 0 (center above plane): penetration = radius - signed_dist
+    // - If signed_dist < 0 (center below plane): penetration = radius + |signed_dist|
+    // Combined: penetration = radius - signed_dist (works for both cases)
+    let penetration = sphere.radius - signed_dist;
 
     if penetration > 0.0 {
-        // Normal points from plane toward sphere center
-        let normal = if signed_dist >= 0.0 {
-            plane.normal
-        } else {
-            -plane.normal
-        };
+        // Normal always points from plane toward sphere (upward for floor)
+        let normal = plane.normal;
 
         // Contact point is on the sphere surface, toward the plane
         let point = sphere.center - normal * sphere.radius;
