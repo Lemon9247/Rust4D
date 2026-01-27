@@ -1,0 +1,8 @@
+[package]
+name = "rust4d_core"
+version = "0.1.0"
+edition = "2021"
+description = "Core types for the Rust4D engine: Transform4D, Entity, World"
+
+[dependencies]
+rust4d_math.workspace = true

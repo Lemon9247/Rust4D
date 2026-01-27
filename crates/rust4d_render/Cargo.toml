@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rust4d_math.workspace = true
+rust4d_core.workspace = true
 rust4d_input.workspace = true
 wgpu.workspace = true
 winit.workspace = true
