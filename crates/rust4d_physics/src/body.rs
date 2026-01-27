@@ -1,7 +1,7 @@
 //! Rigid body types for 4D physics simulation
 
 use crate::material::PhysicsMaterial;
-use crate::shapes::Collider;
+use crate::shapes::{Collider, Plane4D};
 use rust4d_math::Vec4;
 use slotmap::new_key_type;
 
@@ -124,6 +124,50 @@ impl RigidBody4D {
     pub fn apply_correction(&mut self, correction: Vec4) {
         self.position = self.position + correction;
         self.collider = self.collider.translated(correction);
+    }
+}
+
+/// A collider that doesn't move (floors, walls, platforms)
+///
+/// Static colliders are checked for collision with all dynamic bodies
+/// but never move themselves.
+#[derive(Clone, Debug)]
+pub struct StaticCollider {
+    /// The collision shape
+    pub collider: Collider,
+    /// Physics material (friction and restitution)
+    pub material: PhysicsMaterial,
+}
+
+impl StaticCollider {
+    /// Create a new static collider with the given shape and material
+    pub fn new(collider: Collider, material: PhysicsMaterial) -> Self {
+        Self { collider, material }
+    }
+
+    /// Create a plane collider
+    pub fn plane(normal: Vec4, distance: f32, material: PhysicsMaterial) -> Self {
+        Self {
+            collider: Collider::Plane(Plane4D::new(normal, distance)),
+            material,
+        }
+    }
+
+    /// Create a horizontal floor plane at the given Y height
+    pub fn floor(y: f32, material: PhysicsMaterial) -> Self {
+        Self {
+            collider: Collider::Plane(Plane4D::floor(y)),
+            material,
+        }
+    }
+
+    /// Create an AABB static collider
+    pub fn aabb(center: Vec4, half_extents: Vec4, material: PhysicsMaterial) -> Self {
+        use crate::shapes::AABB4D;
+        Self {
+            collider: Collider::AABB(AABB4D::from_center_half_extents(center, half_extents)),
+            material,
+        }
     }
 }
 

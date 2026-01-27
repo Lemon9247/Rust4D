@@ -168,22 +168,33 @@ impl Plane4D {
 pub enum Collider {
     Sphere(Sphere4D),
     AABB(AABB4D),
+    Plane(Plane4D),
 }
 
 impl Collider {
     /// Get the center of the collider
+    ///
+    /// For planes, returns a point on the plane at the origin offset.
     pub fn center(&self) -> Vec4 {
         match self {
             Collider::Sphere(s) => s.center,
             Collider::AABB(b) => b.center(),
+            Collider::Plane(p) => p.normal * p.distance,
         }
     }
 
     /// Translate the collider by a delta
+    ///
+    /// For planes, this adjusts the distance from origin.
     pub fn translated(&self, delta: Vec4) -> Self {
         match self {
             Collider::Sphere(s) => Collider::Sphere(Sphere4D::new(s.center + delta, s.radius)),
             Collider::AABB(b) => Collider::AABB(b.translated(delta)),
+            Collider::Plane(p) => {
+                // Moving a plane by delta means the distance changes by normal · delta
+                let new_distance = p.distance + p.normal.dot(delta);
+                Collider::Plane(Plane4D::new(p.normal, new_distance))
+            }
         }
     }
 }
