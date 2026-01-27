@@ -174,10 +174,6 @@ See [examples/README.md](examples/README.md) for the full example index and lear
 - [Miegakure](https://miegakure.com/) - 4D puzzle platformer
 - [Engine4D](https://github.com/HackerPoet/Engine4D) - Original inspiration
 
-## Contributing
-
-Contributions are welcome! Please see the issue tracker for areas where help is needed.
-
 ## License
 
 MIT
