@@ -2,19 +2,16 @@
 
 use crate::shapes::Collider;
 use rust4d_math::Vec4;
+use slotmap::new_key_type;
 
-/// Handle to a rigid body in the physics world
-///
-/// This is a lightweight identifier that can be used to look up bodies.
-/// It implements Copy so it can be freely passed around without ownership concerns.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct BodyHandle(pub(crate) usize);
-
-impl BodyHandle {
-    /// Get the raw index of this handle (for debugging)
-    pub fn index(&self) -> usize {
-        self.0
-    }
+// Define generational key type for rigid bodies
+new_key_type! {
+    /// Key to a rigid body in the physics world
+    ///
+    /// Uses generational indexing to prevent the ABA problem where a handle
+    /// could point to a reused slot. If a body is removed and its slot reused,
+    /// old keys will return None instead of pointing to the wrong body.
+    pub struct BodyKey;
 }
 
 /// A 4D rigid body with position, velocity, and collision shape
@@ -123,22 +120,6 @@ impl RigidBody4D {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_body_handle_equality() {
-        let h1 = BodyHandle(0);
-        let h2 = BodyHandle(0);
-        let h3 = BodyHandle(1);
-
-        assert_eq!(h1, h2);
-        assert_ne!(h1, h3);
-    }
-
-    #[test]
-    fn test_body_handle_index() {
-        let handle = BodyHandle(42);
-        assert_eq!(handle.index(), 42);
-    }
 
     #[test]
     fn test_new_sphere_body() {

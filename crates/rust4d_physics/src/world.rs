@@ -1,9 +1,10 @@
 //! Physics world and simulation
 
-use crate::body::{BodyHandle, RigidBody4D};
+use crate::body::{BodyKey, RigidBody4D};
 use crate::collision::{aabb_vs_aabb, aabb_vs_plane, sphere_vs_aabb, sphere_vs_plane};
 use crate::shapes::{Collider, Plane4D};
 use rust4d_math::Vec4;
+use slotmap::SlotMap;
 
 /// Configuration for the physics simulation
 #[derive(Clone, Debug)]
@@ -39,8 +40,8 @@ impl PhysicsConfig {
 
 /// The physics world containing all rigid bodies
 pub struct PhysicsWorld {
-    /// All rigid bodies in the world
-    bodies: Vec<RigidBody4D>,
+    /// All rigid bodies in the world (using generational keys)
+    bodies: SlotMap<BodyKey, RigidBody4D>,
     /// The floor plane
     floor: Plane4D,
     /// Physics configuration
@@ -56,32 +57,40 @@ impl PhysicsWorld {
     /// Create a new physics world with custom configuration
     pub fn with_config(config: PhysicsConfig) -> Self {
         Self {
-            bodies: Vec::new(),
+            bodies: SlotMap::with_key(),
             floor: Plane4D::floor(config.floor_y),
             config,
         }
     }
 
-    /// Add a body to the world and return its handle
-    pub fn add_body(&mut self, body: RigidBody4D) -> BodyHandle {
-        let handle = BodyHandle(self.bodies.len());
-        self.bodies.push(body);
-        handle
+    /// Add a body to the world and return its key
+    pub fn add_body(&mut self, body: RigidBody4D) -> BodyKey {
+        self.bodies.insert(body)
     }
 
-    /// Get an immutable reference to a body by handle
-    pub fn get_body(&self, handle: BodyHandle) -> Option<&RigidBody4D> {
-        self.bodies.get(handle.0)
+    /// Remove a body from the world and return it
+    pub fn remove_body(&mut self, key: BodyKey) -> Option<RigidBody4D> {
+        self.bodies.remove(key)
     }
 
-    /// Get a mutable reference to a body by handle
-    pub fn get_body_mut(&mut self, handle: BodyHandle) -> Option<&mut RigidBody4D> {
-        self.bodies.get_mut(handle.0)
+    /// Get an immutable reference to a body by key
+    pub fn get_body(&self, key: BodyKey) -> Option<&RigidBody4D> {
+        self.bodies.get(key)
+    }
+
+    /// Get a mutable reference to a body by key
+    pub fn get_body_mut(&mut self, key: BodyKey) -> Option<&mut RigidBody4D> {
+        self.bodies.get_mut(key)
     }
 
     /// Get the number of bodies in the world
     pub fn body_count(&self) -> usize {
         self.bodies.len()
+    }
+
+    /// Iterate over all body keys
+    pub fn body_keys(&self) -> impl Iterator<Item = BodyKey> + '_ {
+        self.bodies.keys()
     }
 
     /// Step the physics simulation forward by dt seconds
@@ -93,7 +102,7 @@ impl PhysicsWorld {
     /// 4. Body-body collision detection and resolution
     pub fn step(&mut self, dt: f32) {
         // Phase 1: Apply gravity and integrate velocity
-        for body in &mut self.bodies {
+        for (_key, body) in &mut self.bodies {
             if body.is_static {
                 continue;
             }
@@ -118,7 +127,7 @@ impl PhysicsWorld {
 
     /// Resolve collisions between bodies and the floor
     fn resolve_floor_collisions(&mut self) {
-        for body in &mut self.bodies {
+        for (_key, body) in &mut self.bodies {
             if body.is_static {
                 continue;
             }
@@ -151,15 +160,20 @@ impl PhysicsWorld {
 
     /// Resolve collisions between bodies
     fn resolve_body_collisions(&mut self) {
-        let body_count = self.bodies.len();
+        // Collect all keys first (needed because we can't iterate and mutate)
+        let keys: Vec<BodyKey> = self.bodies.keys().collect();
+        let key_count = keys.len();
 
         // Check all pairs of bodies
-        for i in 0..body_count {
-            for j in (i + 1)..body_count {
+        for i in 0..key_count {
+            for j in (i + 1)..key_count {
+                let key_a = keys[i];
+                let key_b = keys[j];
+
                 // Get colliders for both bodies
                 let (collider_a, collider_b, is_static_a, is_static_b) = {
-                    let body_a = &self.bodies[i];
-                    let body_b = &self.bodies[j];
+                    let body_a = &self.bodies[key_a];
+                    let body_b = &self.bodies[key_b];
                     (body_a.collider, body_b.collider, body_a.is_static, body_b.is_static)
                 };
 
@@ -213,7 +227,7 @@ impl PhysicsWorld {
 
                 if let Some(contact) = contact {
                     if contact.is_colliding() {
-                        self.resolve_body_pair_collision(i, j, &contact, is_static_a, is_static_b);
+                        self.resolve_body_pair_collision(key_a, key_b, &contact, is_static_a, is_static_b);
                     }
                 }
             }
@@ -223,8 +237,8 @@ impl PhysicsWorld {
     /// Resolve collision between two specific bodies
     fn resolve_body_pair_collision(
         &mut self,
-        i: usize,
-        j: usize,
+        key_a: BodyKey,
+        key_b: BodyKey,
         contact: &crate::collision::Contact,
         is_static_a: bool,
         is_static_b: bool,
@@ -238,8 +252,8 @@ impl PhysicsWorld {
             (-contact.normal * contact.penetration, Vec4::ZERO)
         } else {
             // Split based on mass
-            let mass_a = self.bodies[i].mass;
-            let mass_b = self.bodies[j].mass;
+            let mass_a = self.bodies[key_a].mass;
+            let mass_b = self.bodies[key_b].mass;
             let total_mass = mass_a + mass_b;
 
             let ratio_a = mass_b / total_mass;
@@ -253,28 +267,28 @@ impl PhysicsWorld {
 
         // Apply position corrections
         if !is_static_a {
-            self.bodies[i].apply_correction(correction_a);
+            self.bodies[key_a].apply_correction(correction_a);
         }
         if !is_static_b {
-            self.bodies[j].apply_correction(correction_b);
+            self.bodies[key_b].apply_correction(correction_b);
         }
 
         // Handle velocity response (simple push-apart)
         if !is_static_a {
-            let vel_along_normal = self.bodies[i].velocity.dot(-contact.normal);
+            let vel_along_normal = self.bodies[key_a].velocity.dot(-contact.normal);
             if vel_along_normal < 0.0 {
-                let restitution = self.bodies[i].restitution.max(self.config.restitution);
+                let restitution = self.bodies[key_a].restitution.max(self.config.restitution);
                 let normal_velocity = -contact.normal * vel_along_normal;
-                self.bodies[i].velocity = self.bodies[i].velocity - normal_velocity * (1.0 + restitution);
+                self.bodies[key_a].velocity = self.bodies[key_a].velocity - normal_velocity * (1.0 + restitution);
             }
         }
 
         if !is_static_b {
-            let vel_along_normal = self.bodies[j].velocity.dot(contact.normal);
+            let vel_along_normal = self.bodies[key_b].velocity.dot(contact.normal);
             if vel_along_normal < 0.0 {
-                let restitution = self.bodies[j].restitution.max(self.config.restitution);
+                let restitution = self.bodies[key_b].restitution.max(self.config.restitution);
                 let normal_velocity = contact.normal * vel_along_normal;
-                self.bodies[j].velocity = self.bodies[j].velocity - normal_velocity * (1.0 + restitution);
+                self.bodies[key_b].velocity = self.bodies[key_b].velocity - normal_velocity * (1.0 + restitution);
             }
         }
     }
@@ -312,9 +326,10 @@ mod tests {
         assert_eq!(world.body_count(), 0);
 
         let body = RigidBody4D::new_sphere(Vec4::new(0.0, 5.0, 0.0, 0.0), 0.5);
-        let handle = world.add_body(body);
+        let key = world.add_body(body);
 
-        assert_eq!(handle.index(), 0);
+        // Key should be valid and retrievable
+        assert!(world.get_body(key).is_some());
         assert_eq!(world.body_count(), 1);
     }
 
@@ -344,10 +359,29 @@ mod tests {
     }
 
     #[test]
-    fn test_world_invalid_handle() {
-        let world = PhysicsWorld::new();
-        let invalid_handle = BodyHandle(999);
-        assert!(world.get_body(invalid_handle).is_none());
+    fn test_stale_key_returns_none() {
+        let mut world = PhysicsWorld::new();
+        let body = RigidBody4D::new_sphere(Vec4::new(0.0, 5.0, 0.0, 0.0), 0.5);
+        let key = world.add_body(body);
+
+        // Key is valid initially
+        assert!(world.get_body(key).is_some());
+
+        // Remove the body
+        let removed = world.remove_body(key);
+        assert!(removed.is_some());
+
+        // Key is now stale - should return None
+        assert!(world.get_body(key).is_none());
+
+        // Add a new body - it gets a different key
+        let new_body = RigidBody4D::new_sphere(Vec4::new(1.0, 5.0, 0.0, 0.0), 0.5);
+        let new_key = world.add_body(new_body);
+
+        // Old key still returns None (generational safety)
+        assert!(world.get_body(key).is_none());
+        // New key works
+        assert!(world.get_body(new_key).is_some());
     }
 
     #[test]

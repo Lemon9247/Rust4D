@@ -13,7 +13,7 @@ pub mod shapes;
 pub mod world;
 
 // Re-export commonly used types
-pub use body::{BodyHandle, RigidBody4D};
+pub use body::{BodyKey, RigidBody4D};
 pub use collision::{aabb_vs_aabb, aabb_vs_plane, sphere_vs_aabb, sphere_vs_plane, Contact};
 pub use player::{PlayerPhysics, DEFAULT_JUMP_VELOCITY, DEFAULT_PLAYER_RADIUS};
 pub use shapes::{Collider, Plane4D, Sphere4D, AABB4D};

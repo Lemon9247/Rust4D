@@ -1462,6 +1462,7 @@ version = "0.1.0"
 dependencies = [
  "rust4d_math",
  "rust4d_physics",
+ "slotmap",
 ]
 
 [[package]]
@@ -1484,6 +1485,7 @@ name = "rust4d_physics"
 version = "0.1.0"
 dependencies = [
  "rust4d_math",
+ "slotmap",
 ]
 
 [[package]]
