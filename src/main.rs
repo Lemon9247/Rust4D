@@ -3,7 +3,6 @@
 //! A 4D rendering engine that displays 3D cross-sections of 4D geometry.
 
 mod config;
-mod scene;
 
 use std::sync::Arc;
 use winit::{
@@ -14,7 +13,7 @@ use winit::{
     window::{CursorGrabMode, Fullscreen, Window, WindowId},
 };
 
-use rust4d_core::{World, SceneManager, ActiveScene};
+use rust4d_core::{World, SceneManager};
 use rust4d_render::{
     context::RenderContext,
     camera4d::Camera4D,
@@ -22,10 +21,8 @@ use rust4d_render::{
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
-use rust4d_physics::PhysicsMaterial;
 use rust4d_math::Vec4;
 
-use scene::SceneBuilder;
 use config::AppConfig;
 
 /// Main application state
@@ -54,39 +51,38 @@ impl App {
             AppConfig::default()
         });
 
-        // Build the scene using SceneBuilder with config values
-        let player_start = Vec4::new(
-            config.camera.start_position[0],
-            config.camera.start_position[1],
-            config.camera.start_position[2],
-            config.camera.start_position[3],
-        );
-
-        // Create scene manager with physics config
+        // Create scene manager and load scene from file
         let mut scene_manager = SceneManager::new()
-            .with_physics(rust4d_physics::PhysicsConfig::new(config.physics.gravity));
+            .with_player_radius(config.scene.player_radius);
 
-        // Build the world using SceneBuilder
-        let world = SceneBuilder::with_capacity(2)
-            .with_physics(config.physics.gravity)
-            .add_floor(config.physics.floor_y, 10.0, PhysicsMaterial::CONCRETE)
-            .add_player(player_start, config.physics.player_radius)
-            .add_tesseract(Vec4::ZERO, 2.0, "tesseract")
-            .build();
+        // Load scene from configured path
+        let scene_name = scene_manager.load_scene(&config.scene.path)
+            .unwrap_or_else(|e| {
+                panic!("Failed to load scene '{}': {}", config.scene.path, e);
+            });
 
-        // Wrap in ActiveScene and register
-        let active_scene = ActiveScene {
-            name: "Main".to_string(),
-            player_spawn: Some([player_start.x, player_start.y, player_start.z, player_start.w]),
-            world,
-        };
-        scene_manager.register_active_scene("main", active_scene);
-        scene_manager.push_scene("main").expect("Failed to push main scene");
+        // Instantiate and activate the scene
+        scene_manager.instantiate(&scene_name)
+            .unwrap_or_else(|e| panic!("Failed to instantiate scene: {}", e));
+        scene_manager.push_scene(&scene_name)
+            .unwrap_or_else(|e| panic!("Failed to push scene: {}", e));
+
+        // Get player start from scene's player_spawn
+        let player_start = scene_manager.active_scene()
+            .and_then(|s| s.player_spawn)
+            .map(|spawn| Vec4::new(spawn[0], spawn[1], spawn[2], spawn[3]))
+            .unwrap_or_else(|| Vec4::new(
+                config.camera.start_position[0],
+                config.camera.start_position[1],
+                config.camera.start_position[2],
+                config.camera.start_position[3],
+            ));
 
         // Build GPU geometry from the world
         let geometry = Self::build_geometry(scene_manager.active_world().unwrap());
 
-        log::info!("Scene manager initialized with {} entities",
+        log::info!("Loaded scene '{}' with {} entities",
+            scene_name,
             scene_manager.active_world().map(|w| w.entity_count()).unwrap_or(0));
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());

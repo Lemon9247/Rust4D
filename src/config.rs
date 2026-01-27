@@ -30,6 +30,9 @@ pub struct AppConfig {
     /// Debug configuration
     #[serde(default)]
     pub debug: DebugConfig,
+    /// Scene configuration
+    #[serde(default)]
+    pub scene: SceneConfig,
 }
 
 impl Default for AppConfig {
@@ -41,6 +44,7 @@ impl Default for AppConfig {
             physics: PhysicsConfig::default(),
             rendering: RenderingConfig::default(),
             debug: DebugConfig::default(),
+            scene: SceneConfig::default(),
         }
     }
 }
@@ -240,6 +244,24 @@ impl Default for DebugConfig {
             show_overlay: false,
             log_level: "info".to_string(),
             show_colliders: false,
+        }
+    }
+}
+
+/// Scene configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SceneConfig {
+    /// Path to the scene file to load
+    pub path: String,
+    /// Player collision radius
+    pub player_radius: f32,
+}
+
+impl Default for SceneConfig {
+    fn default() -> Self {
+        Self {
+            path: "scenes/default.ron".to_string(),
+            player_radius: 0.5,
         }
     }
 }
