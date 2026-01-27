@@ -16,6 +16,7 @@ pollster = "0.4"
 env_logger = "0.11"
 log = "0.4"
 slotmap = "1.0"
+bitflags = "2.4"
 
 # Internal crates
 rust4d_math = { path = "crates/rust4d_math" }
