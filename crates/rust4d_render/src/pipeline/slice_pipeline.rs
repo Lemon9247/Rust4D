@@ -255,7 +255,7 @@ impl SlicePipeline {
         compute_pass.set_pipeline(&self.pipeline);
         compute_pass.set_bind_group(0, self.bind_group.as_ref().unwrap(), &[]);
 
-        let workgroup_count = (self.tetra_count + 63) / 64;
+        let workgroup_count = self.tetra_count.div_ceil(64);
         compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
     }
 

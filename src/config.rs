@@ -13,7 +13,7 @@ use std::path::Path;
 pub use rust4d_physics::PhysicsConfig;
 
 /// Main application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Window configuration
     #[serde(default)]
@@ -36,20 +36,6 @@ pub struct AppConfig {
     /// Scene configuration
     #[serde(default)]
     pub scene: SceneConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            window: WindowConfig::default(),
-            camera: CameraConfig::default(),
-            input: InputConfig::default(),
-            physics: PhysicsConfigToml::default(),
-            rendering: RenderingConfig::default(),
-            debug: DebugConfig::default(),
-            scene: SceneConfig::default(),
-        }
-    }
 }
 
 impl AppConfig {
@@ -226,6 +212,10 @@ pub struct RenderingConfig {
     pub ambient_strength: f32,
     /// Diffuse light strength
     pub diffuse_strength: f32,
+    /// W-axis color tinting strength (0.0 = no tint, 1.0 = full tint)
+    pub w_color_strength: f32,
+    /// W-axis distance for full color effect
+    pub w_range: f32,
 }
 
 impl Default for RenderingConfig {
@@ -236,6 +226,8 @@ impl Default for RenderingConfig {
             light_dir: [0.5, 1.0, 0.3],
             ambient_strength: 0.3,
             diffuse_strength: 0.7,
+            w_color_strength: 0.5,
+            w_range: 2.0,
         }
     }
 }
