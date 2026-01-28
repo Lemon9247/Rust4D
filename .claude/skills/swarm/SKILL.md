@@ -2,7 +2,6 @@
 name: swarm
 description: Start a multi-agent task with hive-mind coordination for complex research or implementation
 argument-hint: [task description]
-disable-model-invocation: true
 ---
 
 # Multi-Agent Swarm Task
@@ -53,9 +52,10 @@ Initialize a swarm of agents to work on: **$ARGUMENTS**
 ## Coordination Notes
 - Each agent should write findings to separate markdown files in this folder
 - Focus areas: [list key areas to investigate]
+- **Cross-agent coordination**: Agents can read and write to this file to share discoveries, ask questions, or flag dependencies
 
 ## Questions for Discussion
-(Agents can add questions here for coordination)
+(Agents can add questions here - other agents should check this section and respond)
 
 ## Status
 - [ ] [Agent 1 Name]: [Status]
@@ -83,7 +83,7 @@ Your mission:
 Coordination:
 - Read the hive-mind file at scratchpad/reports/YYYY-MM-DD-<task>/hive-mind-<task>.md
 - Write your findings to scratchpad/reports/YYYY-MM-DD-<task>/<agent-name>-report.md
-- If you have questions for other agents, add them to the hive-mind file
+- **Cross-agent communication**: If you discover something relevant to other agents, or have questions, add them to the hive-mind file's "Questions for Discussion" section. Check this section periodically for questions from other agents that you can answer.
 
 Focus on [specific aspects]. Do not [any constraints].
 
