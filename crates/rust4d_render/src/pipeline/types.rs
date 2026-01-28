@@ -30,26 +30,6 @@ impl Vertex4D {
     }
 }
 
-/// A 4D simplex (5-cell) composed of 5 vertices
-///
-/// The simplex is the 4D equivalent of a tetrahedron.
-/// When sliced by a hyperplane, it produces 0-4 triangles.
-///
-/// **NOTE**: This is the legacy type. Prefer using `GpuTetrahedron` instead.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct Simplex4D {
-    /// The 5 vertices of the simplex
-    pub vertices: [Vertex4D; 5],
-}
-
-impl Simplex4D {
-    /// Create a new simplex from 5 vertices
-    pub fn new(vertices: [Vertex4D; 5]) -> Self {
-        Self { vertices }
-    }
-}
-
 /// A tetrahedron (3-simplex) for GPU processing
 ///
 /// Stores indices into a vertex buffer rather than the vertices themselves.
@@ -223,12 +203,6 @@ mod tests {
     }
 
     #[test]
-    fn test_simplex4d_size() {
-        // 5 vertices * 32 bytes = 160 bytes
-        assert_eq!(size_of::<Simplex4D>(), 160);
-    }
-
-    #[test]
     fn test_gpu_tetrahedron_size() {
         // 4 u32 indices = 16 bytes
         assert_eq!(size_of::<GpuTetrahedron>(), 16);
@@ -258,7 +232,6 @@ mod tests {
     fn test_alignment() {
         // All types should be 4-byte aligned (f32 alignment)
         assert_eq!(std::mem::align_of::<Vertex4D>(), 4);
-        assert_eq!(std::mem::align_of::<Simplex4D>(), 4);
         assert_eq!(std::mem::align_of::<Vertex3D>(), 4);
         assert_eq!(std::mem::align_of::<SliceParams>(), 4);
         assert_eq!(std::mem::align_of::<RenderUniforms>(), 4);

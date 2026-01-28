@@ -8,12 +8,15 @@ pub mod types;
 pub mod slice_pipeline;
 pub mod render_pipeline;
 
-// Re-export lookup tables
-pub use lookup_tables::{EDGES, EDGE_TABLE, TRI_TABLE};
+// Re-export lookup tables (tetrahedra tables only)
+pub use lookup_tables::{
+    TETRA_EDGES, TETRA_EDGE_TABLE, TETRA_TRI_TABLE, TETRA_TRI_COUNT,
+    tetra_edge_count, tetra_crossed_edges,
+};
 
 // Re-export types
 pub use types::{
-    Vertex4D, Simplex4D, Vertex3D, SliceParams, RenderUniforms,
+    Vertex4D, Vertex3D, SliceParams, RenderUniforms,
     AtomicCounter, GpuTetrahedron, MAX_OUTPUT_TRIANGLES, TRIANGLE_VERTEX_COUNT,
 };
 
