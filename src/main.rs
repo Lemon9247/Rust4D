@@ -89,8 +89,8 @@ impl App {
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());
 
-        // Set camera to player start position
-        let mut camera = Camera4D::new();
+        // Set camera with configured pitch limit and player start position
+        let mut camera = Camera4D::with_pitch_limit(config.camera.pitch_limit.to_radians());
         camera.position = player_start;
 
         // Configure controller from config
