@@ -180,8 +180,13 @@ impl Camera4D {
     }
 
     /// Get the W-coordinate for cross-section slicing
+    ///
+    /// This returns the camera-space offset for the slice plane. The slice
+    /// is always perpendicular to the camera's W axis, at this distance from
+    /// the camera. Using camera-space offset (not world W) ensures the slice
+    /// stays centered on the player regardless of 4D rotation or movement.
     pub fn get_slice_w(&self) -> f32 {
-        self.position.w + self.slice_offset
+        self.slice_offset
     }
 
     /// Adjust the slice offset
@@ -278,7 +283,8 @@ mod tests {
         let mut cam = Camera4D::new();
         cam.position.w = 2.0;
         cam.slice_offset = 0.5;
-        assert_eq!(cam.get_slice_w(), 2.5);
+        // slice_w is camera-space offset only, independent of world position
+        assert_eq!(cam.get_slice_w(), 0.5);
     }
 
     #[test]
@@ -558,6 +564,35 @@ mod tests {
 
         assert!(move_from_w.x.abs() > 0.9, "Q key should affect X position after rotation");
         assert!(move_from_w.w.abs() < 0.1, "Q key should NOT affect W position after rotation");
+    }
+
+    #[test]
+    fn test_slice_stable_during_movement_after_4d_rotation() {
+        // This test verifies the invariant: walking around after 4D rotation
+        // should NOT cause shapes to morph (slice_w relative to camera-space
+        // positions should stay constant)
+
+        let mut cam = Camera4D::new();
+        cam.position = Vec4::new(0.0, 0.0, 5.0, 0.0);
+        cam.slice_offset = 0.0;
+
+        // Apply significant 4D rotation
+        cam.rotate_w(FRAC_PI_2);
+
+        // Check slice_w before movement
+        let slice_w_before = cam.get_slice_w();
+
+        // Walk around extensively
+        cam.move_local_xz(10.0, 5.0);
+        cam.move_local_xz(-3.0, -2.0);
+
+        // slice_w should be unchanged - it's a camera-space offset
+        let slice_w_after = cam.get_slice_w();
+        assert!(
+            (slice_w_after - slice_w_before).abs() < EPSILON,
+            "slice_w changed from {} to {} during movement! This would cause morphing.",
+            slice_w_before, slice_w_after
+        );
     }
 
 }
