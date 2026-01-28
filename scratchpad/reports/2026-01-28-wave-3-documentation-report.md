@@ -2,7 +2,7 @@
 
 **Date:** 2026-01-28
 **Task:** Phase 3B - Comprehensive Documentation Guides
-**Status:** COMPLETE with issues identified
+**Status:** COMPLETE - Issues identified and fixed
 
 ---
 
@@ -154,13 +154,29 @@ Either:
 
 ---
 
-## Commit
+## Commits
 
 ```
 4419bd9 Add Wave 3 documentation guides
+9653f2c Add Wave 3 documentation review report
+b6bcad0 Fix API inaccuracies in documentation
 ```
 
 Branch: `wave-3-documentation`
+
+---
+
+## Issues Fixed
+
+After review, the following issues were corrected in commit `b6bcad0`:
+
+1. **World API** - Fixed `find_by_name` to `get_by_name` and `iter_with_tag` to `get_by_tag`
+2. **SceneManager API** - Fixed `register` to `register_template`, `push` to `push_scene`, corrected method signatures
+3. **Absolute paths** - Removed `/home/lemoneater/Projects/Personal/Rust4D/` prefix from all paths in developer-guide.md
+
+Remaining items (lower priority):
+- Mermaid diagrams not included (optional enhancement)
+- Could split large guides in future if maintenance burden increases
 
 ---
 
