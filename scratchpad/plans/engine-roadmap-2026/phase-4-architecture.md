@@ -1302,6 +1302,82 @@ After each system extraction:
 
 ---
 
+---
+
+## Pre-Phase Cleanup Items (Added 2026-01-28)
+
+The following issues were identified during the post-cleanup codebase review. These should be addressed before or during Phase 4:
+
+### 1. Clippy Warnings (Quick Fix)
+**Effort:** 5 minutes
+**Command:** `cargo clippy --fix --workspace`
+
+11 minor clippy warnings:
+- `rust4d_math`: 3 warnings (loop variable indexing)
+- `rust4d_physics`: 5 warnings (manual assign operations)
+- `rust4d_render`: 2 warnings (manual assign, div_ceil)
+- `rust4d` (bin): 1 warning (impl can be derived)
+
+### 2. Unused Config Values (Decision Required)
+**Effort:** 15-30 minutes
+
+These config values exist but are never read:
+- `debug.show_overlay` - Not implemented
+- `debug.show_colliders` - Not implemented
+- `debug.log_level` - Not connected to logger
+
+**Options:**
+- A) Implement the debug features (show_overlay, show_colliders)
+- B) Remove from config until implemented
+- C) Connect log_level to env_logger initialization
+
+### 3. Missing Config Values for Rendering
+**Effort:** 15 minutes
+
+`w_color_strength` and `w_range` are hardcoded to `0.5` and `2.0` in main.rs and all examples.
+
+**Fix:**
+1. Add to `[rendering]` section of `config/default.toml`:
+   ```toml
+   w_color_strength = 0.5
+   w_range = 2.0
+   ```
+2. Add fields to `RenderingConfigToml` in `src/config.rs`
+3. Connect in main.rs `RenderUniforms` creation
+
+### 4. Example Warnings (Quick Fix)
+**Effort:** 5 minutes
+
+Examples 01, 02, 04 have unused `world` field warnings.
+
+**Fix:** Rename `world` to `_world` in examples that don't use physics, or remove the field entirely.
+
+### 5. Single TODO in Codebase
+**Location:** `crates/rust4d_render/src/pipeline/render_pipeline.rs:210`
+```rust
+// TODO: Add a small compute shader to multiply by 3, or do it on CPU
+```
+
+**Context:** This is about vertex count calculation for indirect draw. Low priority, can be addressed during RenderSystem extraction if desired.
+
+### 6. Vulkan SPIRV Validation Warning (External Issue)
+**Status:** Monitor only
+
+Debug builds show atomic memory semantics warning from wgpu/naga. This is an upstream issue with Vulkan 1.3 validation. Release builds are unaffected.
+
+**Action:** Monitor wgpu releases for a fix. No code change needed.
+
+---
+
+### Pre-Phase Checklist
+
+- [ ] Run `cargo clippy --fix --workspace` to clear lint warnings
+- [ ] Decide on debug config values (implement, remove, or defer)
+- [ ] Add `w_color_strength` and `w_range` to config
+- [ ] Fix example warnings (prefix unused fields with `_`)
+
+---
+
 **Phase 4 Plan Complete**
 
 This plan provides actionable steps for an agent to systematically extract main.rs into modular systems while preserving all functionality. The plan prioritizes safety (one system at a time), testability (unit tests for each system), and maintainability (clear APIs and error handling).

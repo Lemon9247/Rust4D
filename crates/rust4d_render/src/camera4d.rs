@@ -25,7 +25,7 @@ pub struct Camera4D {
     pub position: Vec4,
 
     /// Pitch angle in radians (YZ plane rotation)
-    /// This is separate from 4D rotation and is clamped to ±89°
+    /// This is separate from 4D rotation and is clamped to ±pitch_limit
     /// Equivalent to Engine4D's `lookYZ` (but in radians, not degrees)
     pitch: f32,
 
@@ -36,6 +36,9 @@ pub struct Camera4D {
 
     /// Cross-section offset from camera W position
     pub slice_offset: f32,
+
+    /// Maximum pitch angle in radians (default: ~89 degrees)
+    pitch_limit: f32,
 }
 
 impl Default for Camera4D {
@@ -45,16 +48,22 @@ impl Default for Camera4D {
 }
 
 impl Camera4D {
-    /// Pitch clamp limit: ±89° to prevent gimbal lock (matches Engine4D)
-    const PITCH_LIMIT: f32 = 1.553; // ~89 degrees in radians
+    /// Default pitch clamp limit: ±89° to prevent gimbal lock (matches Engine4D)
+    const DEFAULT_PITCH_LIMIT: f32 = 1.553; // ~89 degrees in radians
 
-    /// Create a new camera at the default position
+    /// Create a new camera at the default position with default pitch limit (89 degrees)
     pub fn new() -> Self {
+        Self::with_pitch_limit(Self::DEFAULT_PITCH_LIMIT)
+    }
+
+    /// Create a new camera with a custom pitch limit (in radians)
+    pub fn with_pitch_limit(pitch_limit: f32) -> Self {
         Self {
             position: Vec4::new(0.0, 0.0, 5.0, 0.0),
             pitch: 0.0,
             rotation_4d: Rotor4::IDENTITY,
             slice_offset: 0.0,
+            pitch_limit,
         }
     }
 
@@ -103,7 +112,7 @@ impl Camera4D {
 
         // Pitch: modify separate pitch variable (NOT rotation_4d!)
         // This is the critical difference from our old implementation.
-        self.pitch = (self.pitch + delta_pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+        self.pitch = (self.pitch + delta_pitch).clamp(-self.pitch_limit, self.pitch_limit);
     }
 
     /// 4D W-rotation (ZW plane)
@@ -195,11 +204,13 @@ impl Camera4D {
     }
 
     /// Reset camera to the default starting position and orientation
+    /// Note: pitch_limit is preserved
     pub fn reset(&mut self) {
         self.position = Vec4::new(0.0, 0.0, 5.0, 0.0);
         self.pitch = 0.0;
         self.rotation_4d = Rotor4::IDENTITY;
         self.slice_offset = 0.0;
+        // pitch_limit is intentionally preserved
     }
 
     /// Get the forward direction vector
@@ -399,8 +410,8 @@ mod tests {
         // Try to pitch way past 90°
         cam.rotate_3d(0.0, 10.0);
 
-        // Pitch should be clamped to ~89°
-        assert!(cam.pitch.abs() <= Camera4D::PITCH_LIMIT + 0.001,
+        // Pitch should be clamped to ~89° (default pitch limit)
+        assert!(cam.pitch.abs() <= Camera4D::DEFAULT_PITCH_LIMIT + 0.001,
             "Pitch should be clamped, got {}", cam.pitch);
     }
 

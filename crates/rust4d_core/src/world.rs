@@ -86,6 +86,10 @@ impl World {
     }
 
     /// Remove an entity from the world and return it
+    ///
+    /// This method also cleans up associated resources:
+    /// - Removes the entity from the name index if it was named
+    /// - Removes the physics body from PhysicsWorld if one was attached
     pub fn remove_entity(&mut self, key: EntityKey) -> Option<Entity> {
         // Remove from entities first
         if let Some(entity) = self.entities.remove(key) {
@@ -93,6 +97,14 @@ impl World {
             if let Some(ref name) = entity.name {
                 self.name_index.remove(name);
             }
+
+            // Clean up physics body if present
+            if let Some(body_key) = entity.physics_body {
+                if let Some(ref mut physics) = self.physics_world {
+                    physics.remove_body(body_key);
+                }
+            }
+
             Some(entity)
         } else {
             None

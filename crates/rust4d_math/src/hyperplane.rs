@@ -29,8 +29,6 @@ pub struct Hyperplane4D {
     grid_size: usize,
     /// Half-extent in W dimension
     w_extent: f32,
-    /// Y thickness (bottom at y=0, top at y=thickness)
-    thickness: f32,
     /// All vertices
     vertices: Vec<Vec4>,
     /// Tetrahedra decomposition
@@ -105,7 +103,6 @@ impl Hyperplane4D {
             half_size: size,
             grid_size,
             w_extent,
-            thickness,
             vertices,
             tetrahedra,
         }

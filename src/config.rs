@@ -181,24 +181,17 @@ impl Default for InputConfig {
 
 /// Physics configuration from TOML
 ///
-/// This wraps the core PhysicsConfig with additional scene-level settings.
-/// The `gravity` and `jump_velocity` fields are passed to the physics engine,
-/// while `floor_y` is used during scene setup.
+/// This wraps the core PhysicsConfig. The `gravity` and `jump_velocity` fields
+/// are passed to the physics engine.
 ///
-/// Note: `player_radius` was moved to `[scene]` section to avoid duplication.
+/// Note: `player_radius` is in `[scene]` section. Floor positions are defined
+/// per-scene in .ron files via Hyperplane entities.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhysicsConfigToml {
     /// Gravity (negative = downward)
     pub gravity: f32,
     /// Jump velocity
     pub jump_velocity: f32,
-    /// Floor Y position (used by scene setup, not physics engine)
-    #[serde(default = "default_floor_y")]
-    pub floor_y: f32,
-}
-
-fn default_floor_y() -> f32 {
-    -2.0
 }
 
 impl Default for PhysicsConfigToml {
@@ -206,7 +199,6 @@ impl Default for PhysicsConfigToml {
         Self {
             gravity: -20.0,
             jump_velocity: 8.0,
-            floor_y: -2.0,
         }
     }
 }
@@ -239,7 +231,7 @@ pub struct RenderingConfig {
 impl Default for RenderingConfig {
     fn default() -> Self {
         Self {
-            max_triangles: 1_000_000,
+            max_triangles: 900_000,
             background_color: [0.02, 0.02, 0.08, 1.0],
             light_dir: [0.5, 1.0, 0.3],
             ambient_strength: 0.3,

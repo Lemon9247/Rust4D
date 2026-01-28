@@ -323,20 +323,15 @@ fn test_scene_dynamic_entity_falls_to_floor() {
     );
 }
 
-/// Test with actual scene file if it exists
+/// Test with actual scene file (requires scenes/default.ron to exist)
+///
+/// Run with: cargo test --test physics_integration test_load_default_scene_file -- --ignored
 #[test]
+#[ignore = "Requires scenes/default.ron to exist"]
 fn test_load_default_scene_file() {
     // Try to load the actual default.ron scene
-    let scene_result = Scene::load("../../../scenes/default.ron");
-
-    // If the file doesn't exist, skip this test
-    let scene = match scene_result {
-        Ok(s) => s,
-        Err(_) => {
-            println!("Skipping test_load_default_scene_file: scenes/default.ron not found");
-            return;
-        }
-    };
+    let scene = Scene::load("../../../scenes/default.ron")
+        .expect("scenes/default.ron should exist for this test");
 
     // Instantiate scene
     let mut active = ActiveScene::from_template(&scene, None, 0.5);
@@ -360,8 +355,6 @@ fn test_load_default_scene_file() {
     // Get final position
     let (_, entity) = active.world.get_by_name("tesseract").unwrap();
     let final_y = entity.transform.position.y;
-
-    println!("Default scene test: initial_y={}, final_y={}", initial_y, final_y);
 
     // Tesseract should have fallen
     assert!(
@@ -463,4 +456,81 @@ fn test_physics_step_trace() {
 
     // Should be falling
     assert!(body.position.y < 0.0, "Body should have fallen");
+}
+
+// ==================== Physics Cleanup Tests ====================
+
+/// Test that removing an entity also removes its physics body
+#[test]
+fn test_remove_entity_cleans_up_physics_body() {
+    let mut world = World::new().with_physics(PhysicsConfig::new(-20.0));
+
+    // Add a physics body
+    let body = RigidBody4D::new_sphere(Vec4::new(0.0, 5.0, 0.0, 0.0), 0.5)
+        .with_body_type(BodyType::Dynamic);
+    let body_key = world.physics_mut().unwrap().add_body(body);
+
+    // Create an entity linked to the physics body
+    let tesseract = Tesseract4D::new(2.0);
+    let entity = rust4d_core::Entity::new(ShapeRef::shared(tesseract))
+        .with_name("physics_test")
+        .with_physics_body(body_key);
+    let entity_key = world.add_entity(entity);
+
+    // Verify body exists in physics world
+    assert!(
+        world.physics().unwrap().get_body(body_key).is_some(),
+        "Physics body should exist before entity removal"
+    );
+    assert_eq!(
+        world.physics().unwrap().body_count(), 1,
+        "Should have exactly 1 physics body"
+    );
+
+    // Remove the entity
+    let removed = world.remove_entity(entity_key);
+    assert!(removed.is_some(), "Entity should be removed");
+
+    // Verify physics body was also removed
+    assert!(
+        world.physics().unwrap().get_body(body_key).is_none(),
+        "Physics body should be removed when entity is removed"
+    );
+    assert_eq!(
+        world.physics().unwrap().body_count(), 0,
+        "Should have 0 physics bodies after entity removal"
+    );
+}
+
+/// Test that removing an entity without physics body works correctly
+#[test]
+fn test_remove_entity_without_physics_body() {
+    let mut world = World::new().with_physics(PhysicsConfig::new(-20.0));
+
+    // Create an entity WITHOUT a physics body
+    let tesseract = Tesseract4D::new(2.0);
+    let entity = rust4d_core::Entity::new(ShapeRef::shared(tesseract))
+        .with_name("no_physics");
+    let entity_key = world.add_entity(entity);
+
+    // Remove the entity - should not panic
+    let removed = world.remove_entity(entity_key);
+    assert!(removed.is_some(), "Entity should be removed");
+    assert!(removed.unwrap().physics_body.is_none(), "Removed entity should have no physics body");
+}
+
+/// Test that removing an entity in a world without physics works
+#[test]
+fn test_remove_entity_world_without_physics() {
+    let mut world = World::new(); // No physics enabled
+
+    // Create an entity
+    let tesseract = Tesseract4D::new(2.0);
+    let entity = rust4d_core::Entity::new(ShapeRef::shared(tesseract))
+        .with_name("test");
+    let entity_key = world.add_entity(entity);
+
+    // Remove should work fine
+    let removed = world.remove_entity(entity_key);
+    assert!(removed.is_some(), "Entity should be removed even without physics world");
 }

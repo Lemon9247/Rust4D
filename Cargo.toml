@@ -52,6 +52,7 @@ figment.workspace = true
 
 [dev-dependencies]
 toml = "0.8"
+serial_test = "3.0"
 
 [[example]]
 name = "01_hello_tesseract"

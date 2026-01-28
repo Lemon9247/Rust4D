@@ -7,11 +7,6 @@ use rust4d_core::{Entity, World, Material};
 use rust4d_math::Vec4;
 use crate::pipeline::{Vertex4D, GpuTetrahedron};
 
-/// A color function that generates vertex colors
-///
-/// Used to customize how vertices are colored during geometry collection.
-pub type ColorFn = Box<dyn Fn(&Vec4, &Material) -> [f32; 4]>;
-
 /// GPU-ready geometry collected from entities
 ///
 /// This struct holds the vertices and tetrahedra in a format ready for
@@ -150,20 +145,6 @@ pub fn position_gradient_color(vertex: &Vec4, _material: &Material) -> [f32; 4] 
         (vertex.y + 1.0) / 2.0, // Green from y
         (vertex.z + 1.0) / 2.0, // Blue from z
         1.0,
-    ]
-}
-
-/// Color function that blends material color with position gradient
-pub fn blended_color(vertex: &Vec4, material: &Material) -> [f32; 4] {
-    let pos_color = position_gradient_color(vertex, material);
-    let base = material.base_color;
-
-    // 50/50 blend
-    [
-        (pos_color[0] + base[0]) * 0.5,
-        (pos_color[1] + base[1]) * 0.5,
-        (pos_color[2] + base[2]) * 0.5,
-        base[3], // Keep material alpha
     ]
 }
 

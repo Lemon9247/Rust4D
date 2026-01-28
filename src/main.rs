@@ -89,8 +89,8 @@ impl App {
         log::info!("Total geometry: {} vertices, {} tetrahedra",
             geometry.vertex_count(), geometry.tetrahedron_count());
 
-        // Set camera to player start position
-        let mut camera = Camera4D::new();
+        // Set camera with configured pitch limit and player start position
+        let mut camera = Camera4D::with_pitch_limit(config.camera.pitch_limit.to_radians());
         camera.position = player_start;
 
         // Configure controller from config
@@ -98,6 +98,7 @@ impl App {
             .with_move_speed(config.input.move_speed)
             .with_w_move_speed(config.input.w_move_speed)
             .with_mouse_sensitivity(config.input.mouse_sensitivity)
+            .with_w_rotation_sensitivity(config.input.w_rotation_sensitivity)
             .with_smoothing_half_life(config.input.smoothing_half_life)
             .with_smoothing(config.input.smoothing_enabled);
 
@@ -173,12 +174,17 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            let window_attributes = Window::default_attributes()
+            let mut window_attributes = Window::default_attributes()
                 .with_title(&self.config.window.title)
                 .with_inner_size(winit::dpi::LogicalSize::new(
                     self.config.window.width,
                     self.config.window.height,
                 ));
+
+            // Apply fullscreen from config
+            if self.config.window.fullscreen {
+                window_attributes = window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
 
             let window = Arc::new(
                 event_loop
@@ -186,11 +192,16 @@ impl ApplicationHandler for App {
                     .expect("Failed to create window"),
             );
 
-            // Create render context
-            let render_context = pollster::block_on(RenderContext::new(window.clone()));
+            // Create render context with configured vsync
+            let render_context = pollster::block_on(
+                RenderContext::with_vsync(window.clone(), self.config.window.vsync)
+            );
 
             // Create pipelines
-            let mut slice_pipeline = SlicePipeline::new(&render_context.device);
+            let mut slice_pipeline = SlicePipeline::new(
+                &render_context.device,
+                self.config.rendering.max_triangles as usize,
+            );
             let mut render_pipeline = RenderPipeline::new(
                 &render_context.device,
                 render_context.config.format,
@@ -547,16 +558,20 @@ fn main() {
 #[cfg(test)]
 mod integration_tests {
     use super::config::AppConfig;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_env_override() {
         std::env::set_var("R4D_WINDOW__TITLE", "Test From Env");
         let config = AppConfig::load().unwrap();
         println!("Window title: {}", config.window.title);
         assert_eq!(config.window.title, "Test From Env");
+        std::env::remove_var("R4D_WINDOW__TITLE");
     }
 
     #[test]
+    #[serial]
     fn test_user_config_loading() {
         // Remove env var to test file-based config
         std::env::remove_var("R4D_WINDOW__TITLE");

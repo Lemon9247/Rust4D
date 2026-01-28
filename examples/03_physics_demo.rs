@@ -27,7 +27,7 @@ use rust4d_core::{
 use rust4d_render::{
     camera4d::Camera4D,
     context::RenderContext,
-    pipeline::{perspective_matrix, RenderPipeline, RenderUniforms, SliceParams, SlicePipeline},
+    pipeline::{perspective_matrix, RenderPipeline, RenderUniforms, SliceParams, SlicePipeline, MAX_OUTPUT_TRIANGLES},
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_math::Vec4;
@@ -162,7 +162,7 @@ impl ApplicationHandler for App {
             );
 
             let render_context = pollster::block_on(RenderContext::new(window.clone()));
-            let mut slice_pipeline = SlicePipeline::new(&render_context.device);
+            let mut slice_pipeline = SlicePipeline::new(&render_context.device, MAX_OUTPUT_TRIANGLES);
             let mut render_pipeline =
                 RenderPipeline::new(&render_context.device, render_context.config.format);
 

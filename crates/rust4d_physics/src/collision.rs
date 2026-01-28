@@ -600,11 +600,11 @@ mod tests {
         assert!(contact.penetration > 0.0, "Should have positive penetration");
 
         // Tesseract at rest position y=-1 (bottom at y=-2, exactly on floor)
-        let tesseract_resting = AABB4D::from_center_half_extents(
+        // At exact boundary - behavior is undefined (floating point edge case)
+        let _tesseract_resting = AABB4D::from_center_half_extents(
             Vec4::new(0.0, -1.0, 0.0, 0.0),
             Vec4::new(1.0, 1.0, 1.0, 1.0),
         );
-        // At exact boundary - may or may not register as collision
         // Important: at y=-1.0001, should collide
         let tesseract_slightly_in = AABB4D::from_center_half_extents(
             Vec4::new(0.0, -1.001, 0.0, 0.0),
