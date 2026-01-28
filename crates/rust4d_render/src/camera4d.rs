@@ -487,4 +487,77 @@ mod tests {
             "W movement should not affect Y, got Y={}", cam.position.y);
     }
 
+    #[test]
+    fn test_ana_changes_after_4d_rotation() {
+        let mut cam = Camera4D::new();
+
+        // Initial ana() should point in +W direction
+        let ana_before = cam.ana();
+        eprintln!("ana_before: ({:.4}, {:.4}, {:.4}, {:.4})",
+            ana_before.x, ana_before.y, ana_before.z, ana_before.w);
+        assert!(ana_before.w > 0.9,
+            "Initial ana should be ~(0,0,0,1), got W={}", ana_before.w);
+        assert!(ana_before.x.abs() < 0.1,
+            "Initial ana X should be ~0, got {}", ana_before.x);
+
+        // After 90° rotation in XW plane (via rotate_w), ana should change
+        cam.rotate_w(FRAC_PI_2);
+
+        let ana_after = cam.ana();
+        eprintln!("ana_after: ({:.4}, {:.4}, {:.4}, {:.4})",
+            ana_after.x, ana_after.y, ana_after.z, ana_after.w);
+
+        // After 90° XW rotation, W axis should point in X direction (or -X)
+        assert!(ana_after.w.abs() < 0.1,
+            "After 90° rotation, W component should be ~0, got {}", ana_after.w);
+        assert!(ana_after.x.abs() > 0.9,
+            "After 90° rotation, X component should be ~±1, got {}", ana_after.x);
+
+        // Y should never be affected by rotate_w (that's the point of SkipY)
+        assert!(ana_after.y.abs() < 0.1,
+            "Y should never be affected by rotate_w, got {}", ana_after.y);
+    }
+
+    #[test]
+    fn test_w_movement_direction_main_rs_flow() {
+        // This test simulates the exact flow in main.rs to verify movement direction
+        let mut cam = Camera4D::new();
+
+        // Helper function matching main.rs projection
+        fn project_ana(ana: Vec4) -> Vec4 {
+            Vec4::new(ana.x, 0.0, ana.z, ana.w).normalized()
+        }
+
+        // === Before any rotation ===
+        let ana = cam.ana();
+        let ana_xzw = project_ana(ana);
+        eprintln!("Before rotation: ana=({:.2},{:.2},{:.2},{:.2}) projected=({:.2},{:.2},{:.2},{:.2})",
+            ana.x, ana.y, ana.z, ana.w, ana_xzw.x, ana_xzw.y, ana_xzw.z, ana_xzw.w);
+
+        // W movement should go in +W direction
+        assert!(ana_xzw.w > 0.9, "Before rotation, W movement should be +W");
+        assert!(ana_xzw.x.abs() < 0.1, "Before rotation, X component should be ~0");
+
+        // === After 90° rotation ===
+        cam.rotate_w(FRAC_PI_2);
+
+        let ana = cam.ana();
+        let ana_xzw = project_ana(ana);
+        eprintln!("After 90° rotation: ana=({:.2},{:.2},{:.2},{:.2}) projected=({:.2},{:.2},{:.2},{:.2})",
+            ana.x, ana.y, ana.z, ana.w, ana_xzw.x, ana_xzw.y, ana_xzw.z, ana_xzw.w);
+
+        // W movement should now go in +X or -X direction
+        assert!(ana_xzw.w.abs() < 0.1, "After 90° rotation, W movement should NOT go in W direction");
+        assert!(ana_xzw.x.abs() > 0.9, "After 90° rotation, W movement should go in X direction");
+
+        // Verify: pressing Q after rotation affects X, not W
+        let w_input = 1.0;
+        let move_from_w = ana_xzw * w_input;
+        eprintln!("Movement from Q key: ({:.2},{:.2},{:.2},{:.2})",
+            move_from_w.x, move_from_w.y, move_from_w.z, move_from_w.w);
+
+        assert!(move_from_w.x.abs() > 0.9, "Q key should affect X position after rotation");
+        assert!(move_from_w.w.abs() < 0.1, "Q key should NOT affect W position after rotation");
+    }
+
 }
