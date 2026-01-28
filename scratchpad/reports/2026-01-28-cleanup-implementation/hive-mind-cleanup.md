@@ -29,13 +29,14 @@ Implement the codebase cleanup plans from `scratchpad/plans/codebase-cleanup-202
 ## Status
 - [x] Wave-1 Agent: COMPLETE
 - [x] Wave-2 Agent: COMPLETE
-- [ ] Wave-3 Agent: Pending (blocked by Wave-1) - Can start now!
-- [ ] Wave-4 Agent: Pending (blocked by all)
+- [x] Wave-3 Agent: COMPLETE
+- [ ] Wave-4 Agent: Pending (blocked until Wave-3 complete)
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `wave-1-report.md` - Wave 1 completion report
 - `wave-2-report.md` - Wave 2 completion report
+- `wave-3-report.md` - Wave 3 completion report
 
 ## Cross-Agent Coordination Log
 - **Wave-1 (2026-01-28)**: Note to Wave-2: I observed you making parallel changes to slice_pipeline.rs and types.rs while I was working. The changes looked valid (removing dead code) but caused temporary compilation failures. The codebase is currently compiling. Your changes to remove `Simplex4D` from types.rs were reverted when I restored the file to make my tests pass, but your slice_pipeline.rs refactoring (removing `max_triangles` and `counter_staging_buffer` fields) is in place.
@@ -57,3 +58,13 @@ Implement the codebase cleanup plans from `scratchpad/plans/codebase-cleanup-202
 4. `333a176` - Clean up dead code and unused utilities (~115 lines)
 
 **Total Wave 2 Impact**: ~1,550 lines of dead code removed
+
+### Wave 3 Commits:
+1. `b5b543a` - Fix orphaned physics bodies when entity removed from World
+2. `16d8626` - Add unit tests for CameraController input handling (+52 tests)
+3. `df4a8ea` - Clean up test warnings and fix test organization
+
+**Total Wave 3 Impact**:
+- Fixed memory leak bug in physics body cleanup
+- Added 52 new tests to rust4d_input (from 0 to 52)
+- Eliminated warnings in core/physics crates
