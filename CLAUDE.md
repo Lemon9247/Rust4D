@@ -95,28 +95,18 @@ This project is written in Rust. Use `cargo` for building, testing, and running.
 
 # Subagents / Swarms
 
-1) When using multiple sub-agents for a task, Claude should create a new subfolder in the scratchpad/reports folder.
+When using multiple sub-agents for a task, **always invoke the `/swarm` skill first**. The skill contains the full coordination protocol including:
 
-2) Each subagent should be given a name based on their role, e.g. Testing Agent, Coding Agent
+- Hive-mind file setup for cross-agent coordination
+- Agent naming and report templates
+- Instructions agents need to write their own reports
+- Synthesis report format
 
-3) This subfolder should contain a hive-mind-[TASK].md file, where [TASK] is substituted with an appropriate name for the task. The subagents should use this file to coordinate with each other and ask questions.
-
-4) When each subagent finishes their task, they should write up a report of their work in separate markdown files in this subfolder.
-
-5) When all subagents finish, Claude should synthesise their reports into a final summary report, which should be a separate markdown file.
-
-6) **Swarm status display:** After launching agents, display a status table showing all agents and their current state:
-   ```
-   | Agent | Focus | Status |
-   |-------|-------|--------|
-   | Documentation Agent | READMEs, docs | Running |
-   | Architecture Agent | main.rs structure | Complete |
-   ```
-   Then wait for agents to complete rather than doing other work. Update the table as agents finish. Use the task list (TaskCreate/TaskUpdate) to track agent progress - create a task for each agent so progress is visible in the UI.
-
-7) **Don't interrupt running agents:** Once agents are launched, avoid starting new unrelated work. Wait for notifications that agents have completed, then synthesize their results.
-
-Use the `/swarm` skill to initiate multi-agent tasks.
+Key principles:
+- **Agents must write their own reports** to the swarm folder
+- **Hive-mind file enables coordination** - agents can read/write to share discoveries
+- **Wait for agents to complete** before synthesizing results
+- **Use TaskCreate/TaskUpdate** to track agent progress in the UI
 
 # Skills
 
