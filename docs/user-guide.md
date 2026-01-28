@@ -70,6 +70,35 @@ This guide is organized from foundational concepts to advanced topics:
 7. **Rendering** - GPU pipeline and visualization
 8. **API Quick Reference** - Concise type and pattern summaries
 
+### Crate Architecture
+
+Rust4D is organized into five crates with clear dependencies:
+
+```mermaid
+graph TD
+    A[rust4d_math] --> B[rust4d_core]
+    A --> C[rust4d_physics]
+    A --> D[rust4d_render]
+    B --> C
+    B --> D
+    A --> E[rust4d_input]
+    D --> E
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#fce4ec
+    style D fill:#e8f5e9
+    style E fill:#f3e5f5
+```
+
+| Crate | Purpose |
+|-------|---------|
+| `rust4d_math` | 4D vectors, rotors, matrices, shapes |
+| `rust4d_core` | World, entities, transforms, scenes |
+| `rust4d_physics` | Collision detection, rigid bodies |
+| `rust4d_render` | GPU pipeline, camera, slicing |
+| `rust4d_input` | Keyboard/mouse handling |
+
 ---
 
 ## Understanding 4D Space
@@ -462,7 +491,7 @@ let positioned = Entity::with_transform(
 );
 ```
 
-See: `/home/lemoneater/Projects/Personal/Rust4D/examples/01_hello_tesseract.rs`
+See: `examples/01_hello_tesseract.rs`
 
 #### Hyperplane
 
@@ -639,6 +668,19 @@ if let Some(physics) = world.physics_mut() {
     physics.apply_player_movement(movement_vec);
     physics.player_jump();
 }
+```
+
+#### Physics Update Cycle
+
+Each frame, `world.update(dt)` performs:
+
+```mermaid
+flowchart TD
+    A[Apply Gravity] --> B[Integrate Velocities]
+    B --> C[Detect Collisions]
+    C --> D[Resolve Contacts]
+    D --> E[Sync Entity Transforms]
+    E --> F[Mark Dirty Flags]
 ```
 
 ### RigidBody Properties
@@ -972,7 +1014,7 @@ if controller.consume_jump() {
 | Mouse | Look (when captured) |
 | Right-click + drag | 4D rotation |
 
-See: `/home/lemoneater/Projects/Personal/Rust4D/examples/04_camera_exploration.rs`
+See: `examples/04_camera_exploration.rs`
 
 ### Slicing
 
@@ -1005,9 +1047,20 @@ Moving in W (Q/E keys) is like moving through "layers" of 4D space.
 
 ## Scene System
 
+The scene system manages loading, instantiation, and switching between scenes.
+
+```mermaid
+flowchart LR
+    A[RON File] -->|load| B[Scene Template]
+    B -->|register_template| C[SceneManager]
+    C -->|instantiate| D[ActiveScene]
+    D -->|push_scene| E[Scene Stack]
+    E -->|active_world| F[World + Physics]
+```
+
 ### Scene Files (RON)
 
-Scenes are defined in RON (Rusty Object Notation) files. The default scene is at `/home/lemoneater/Projects/Personal/Rust4D/scenes/default.ron`.
+Scenes are defined in RON (Rusty Object Notation) files. The default scene is at `scenes/default.ron`.
 
 #### Scene Structure
 
@@ -1127,7 +1180,7 @@ Bottom: (none - cleared when switching)
 
 ### Configuration (TOML)
 
-Configuration uses a layered TOML system. The default configuration is at `/home/lemoneater/Projects/Personal/Rust4D/config/default.toml`.
+Configuration uses a layered TOML system. The default configuration is at `config/default.toml`.
 
 #### Configuration Structure
 
@@ -1209,9 +1262,17 @@ Priority: Environment > user.toml > default.toml
 
 Rust4D uses a two-pass GPU pipeline to render 4D geometry:
 
-```
-4D Tetrahedra --> [Compute Shader] --> 3D Triangles --> [Render Shader] --> Screen
-                     (Slicing)                           (Lighting)
+```mermaid
+flowchart LR
+    A[4D Tetrahedra] --> B[Compute Shader<br/>Slicing]
+    B --> C[3D Triangles]
+    C --> D[Render Shader<br/>Lighting]
+    D --> E[Screen]
+
+    subgraph GPU Pipeline
+        B
+        D
+    end
 ```
 
 #### Pass 1: Slicing (Compute Shader)
@@ -1602,7 +1663,7 @@ far = 100.0
 
 ## See Also
 
-- Examples: `/home/lemoneater/Projects/Personal/Rust4D/examples/`
-- Architecture: `/home/lemoneater/Projects/Personal/Rust4D/ARCHITECTURE.md`
-- Default Scene: `/home/lemoneater/Projects/Personal/Rust4D/scenes/default.ron`
-- Default Config: `/home/lemoneater/Projects/Personal/Rust4D/config/default.toml`
+- Examples: `examples/`
+- Architecture: `ARCHITECTURE.md`
+- Default Scene: `scenes/default.ron`
+- Default Config: `config/default.toml`

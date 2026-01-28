@@ -179,7 +179,27 @@ Imagine a 2D being living on a flat plane. If a 3D sphere passes through their p
 they see a circle that appears, grows, shrinks, and vanishes - 2D cross-sections of
 a 3D object.
 
+```mermaid
+flowchart LR
+    subgraph "3D Sphere passing through 2D plane"
+        A["Point"] --> B["Small Circle"]
+        B --> C["Large Circle"]
+        C --> D["Small Circle"]
+        D --> E["Point"]
+    end
+```
+
 Rust4D does this one dimension higher: we see 3D cross-sections of 4D objects.
+
+```mermaid
+flowchart LR
+    subgraph "4D Tesseract passing through 3D hyperplane"
+        F["Point"] --> G["Small Cube"]
+        G --> H["Full Cube"]
+        H --> I["Small Cube"]
+        I --> J["Point"]
+    end
+```
 
 ### The W-Axis
 
