@@ -14,8 +14,12 @@ graph TD
     rust4d_core --> rust4d_math
     rust4d_core --> rust4d_physics
     rust4d_render --> rust4d_math
+    rust4d_render --> rust4d_core
+    rust4d_render --> rust4d_input
     rust4d_physics --> rust4d_math
 ```
+
+Note: `rust4d_render` depends on `rust4d_input` for the `CameraControl` trait. This coupling may be refactored in a future phase to move the trait to a shared location.
 
 ### Crate Descriptions
 
