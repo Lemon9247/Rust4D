@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn test_delta_time_capped() {
-        let mut sim = SimulationSystem::new();
+        let sim = SimulationSystem::new();
         // Simulate a 100ms pause (first frame or window focus)
         std::thread::sleep(std::time::Duration::from_millis(100));
 

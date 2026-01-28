@@ -15,13 +15,11 @@ use winit::{
 };
 
 use input::{InputMapper, InputAction};
-use systems::{SimulationSystem, WindowSystem};
+use systems::{RenderError, RenderSystem, SimulationSystem, WindowSystem};
 
 use rust4d_core::{World, SceneManager};
 use rust4d_render::{
-    context::RenderContext,
     camera4d::Camera4D,
-    pipeline::{SlicePipeline, RenderPipeline, SliceParams, RenderUniforms, perspective_matrix},
     RenderableGeometry, CheckerboardGeometry, position_gradient_color,
 };
 use rust4d_input::CameraController;
@@ -35,9 +33,8 @@ struct App {
     config: AppConfig,
     /// Window system (created on resume)
     window_system: Option<WindowSystem>,
-    render_context: Option<RenderContext>,
-    slice_pipeline: Option<SlicePipeline>,
-    render_pipeline: Option<RenderPipeline>,
+    /// Render system (created on resume)
+    render_system: Option<RenderSystem>,
     /// Scene manager handling scene stack and physics
     scene_manager: SceneManager,
     /// Cached GPU geometry (rebuilt when world changes)
@@ -110,9 +107,7 @@ impl App {
         Self {
             config,
             window_system: None,
-            render_context: None,
-            slice_pipeline: None,
-            render_pipeline: None,
+            render_system: None,
             scene_manager,
             geometry,
             camera,
@@ -156,42 +151,19 @@ impl ApplicationHandler for App {
             let window_system = WindowSystem::create(event_loop, &self.config.window)
                 .expect("Failed to create window");
 
-            // Create render context with configured vsync
-            let render_context = pollster::block_on(
-                RenderContext::with_vsync(window_system.window().clone(), self.config.window.vsync)
+            // Create render system
+            let mut render_system = RenderSystem::new(
+                window_system.window().clone(),
+                self.config.rendering.clone(),
+                self.config.camera.clone(),
+                self.config.window.vsync,
             );
 
-            // Create pipelines
-            let mut slice_pipeline = SlicePipeline::new(
-                &render_context.device,
-                self.config.rendering.max_triangles as usize,
-            );
-            let mut render_pipeline = RenderPipeline::new(
-                &render_context.device,
-                render_context.config.format,
-            );
-
-            // Ensure depth texture exists
-            render_pipeline.ensure_depth_texture(
-                &render_context.device,
-                render_context.size.width,
-                render_context.size.height,
-            );
-
-            // Upload geometry
-            slice_pipeline.upload_tetrahedra(
-                &render_context.device,
-                &self.geometry.vertices,
-                &self.geometry.tetrahedra,
-            );
-
-            log::info!("Loaded {} vertices and {} tetrahedra",
-                self.geometry.vertex_count(), self.geometry.tetrahedron_count());
+            // Upload initial geometry
+            render_system.upload_geometry(&self.geometry);
 
             self.window_system = Some(window_system);
-            self.render_context = Some(render_context);
-            self.slice_pipeline = Some(slice_pipeline);
-            self.render_pipeline = Some(render_pipeline);
+            self.render_system = Some(render_system);
         }
     }
 
@@ -202,17 +174,8 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Resized(physical_size) => {
-                if let Some(ctx) = &mut self.render_context {
-                    ctx.resize(physical_size);
-                }
-                if let (Some(ctx), Some(render_pipeline)) =
-                    (&self.render_context, &mut self.render_pipeline)
-                {
-                    render_pipeline.ensure_depth_texture(
-                        &ctx.device,
-                        physical_size.width,
-                        physical_size.height,
-                    );
+                if let Some(rs) = &mut self.render_system {
+                    rs.resize(physical_size.width, physical_size.height);
                 }
             }
 
@@ -296,12 +259,8 @@ impl ApplicationHandler for App {
                 // Rebuild geometry if entities changed
                 if result.geometry_dirty {
                     self.geometry = Self::build_geometry(self.scene_manager.active_world().unwrap());
-                    if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
-                        slice_pipeline.upload_tetrahedra(
-                            &ctx.device,
-                            &self.geometry.vertices,
-                            &self.geometry.tetrahedra,
-                        );
+                    if let Some(rs) = &mut self.render_system {
+                        rs.upload_geometry(&self.geometry);
                     }
                     if let Some(w) = self.scene_manager.active_world_mut() {
                         w.clear_all_dirty();
@@ -314,118 +273,22 @@ impl ApplicationHandler for App {
                     ws.update_title([pos.x, pos.y, pos.z, pos.w], self.camera.get_slice_w());
                 }
 
-                // Render
-                if let (Some(ctx), Some(slice_pipeline), Some(render_pipeline)) = (
-                    &self.render_context,
-                    &self.slice_pipeline,
-                    &self.render_pipeline,
-                ) {
-                    // Camera positions
-                    let pos = self.camera.position;
-                    let eye_3d = [pos.x, pos.y, pos.z];
-                    let camera_pos_4d = [pos.x, pos.y, pos.z, pos.w];
-
-                    // Update slice parameters
-                    let camera_matrix = self.camera.rotation_matrix();
-                    let slice_params = SliceParams {
-                        slice_w: self.camera.get_slice_w(),
-                        tetrahedron_count: self.geometry.tetrahedron_count() as u32,
-                        _padding: [0.0; 2],
-                        camera_matrix,
-                        camera_eye: eye_3d,
-                        _padding2: 0.0,
-                        camera_position: camera_pos_4d,
-                    };
-                    slice_pipeline.update_params(&ctx.queue, &slice_params);
-
-                    // Create view and projection matrices
-                    let aspect = ctx.aspect_ratio();
-                    let proj_matrix = perspective_matrix(
-                        self.config.camera.fov.to_radians(),
-                        aspect,
-                        self.config.camera.near,
-                        self.config.camera.far,
-                    );
-
-                    // The slice shader transforms 4D geometry to camera space:
-                    // 1. Translates by -camera_position (camera at origin)
-                    // 2. Rotates by inverse(camera_matrix) to align with camera view
-                    // So the output 3D coordinates are already in camera space.
-                    // View matrix is identity - no additional transformation needed.
-                    let view_matrix = [
-                        [1.0, 0.0, 0.0, 0.0],
-                        [0.0, 1.0, 0.0, 0.0],
-                        [0.0, 0.0, 1.0, 0.0],
-                        [0.0, 0.0, 0.0, 1.0],
-                    ];
-
-                    let render_uniforms = RenderUniforms {
-                        view_matrix,
-                        projection_matrix: proj_matrix,
-                        light_dir: self.config.rendering.light_dir,
-                        _padding: 0.0,
-                        ambient_strength: self.config.rendering.ambient_strength,
-                        diffuse_strength: self.config.rendering.diffuse_strength,
-                        w_color_strength: self.config.rendering.w_color_strength,
-                        w_range: self.config.rendering.w_range,
-                    };
-                    render_pipeline.update_uniforms(&ctx.queue, &render_uniforms);
-
-                    // Get surface texture
-                    let output = match ctx.surface.get_current_texture() {
-                        Ok(output) => output,
-                        Err(wgpu::SurfaceError::Lost) => {
-                            if let Some(ctx) = &mut self.render_context {
-                                ctx.resize(ctx.size);
-                            }
-                            if let Some(ws) = &self.window_system {
-                                ws.request_redraw();
-                            }
-                            return;
+                // Render frame
+                if let Some(rs) = &mut self.render_system {
+                    match rs.render_frame(&self.camera, &self.geometry) {
+                        Ok(()) => {}
+                        Err(RenderError::SurfaceLost) => {
+                            let (w, h) = rs.size();
+                            rs.resize(w, h);
                         }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                        Err(RenderError::OutOfMemory) => {
                             event_loop.exit();
                             return;
                         }
                         Err(e) => {
-                            log::warn!("Surface error: {:?}", e);
-                            return;
+                            log::warn!("Render error: {}", e);
                         }
-                    };
-
-                    let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-                    // Create command encoder
-                    let mut encoder = ctx.device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor {
-                            label: Some("Render Encoder"),
-                        },
-                    );
-
-                    // Reset counter and run compute pass
-                    slice_pipeline.reset_counter(&ctx.queue);
-                    slice_pipeline.run_slice_pass(&mut encoder);
-
-                    // Copy triangle count to indirect buffer
-                    render_pipeline.prepare_indirect_draw(&mut encoder, slice_pipeline.counter_buffer());
-
-                    // Render pass
-                    let bg = &self.config.rendering.background_color;
-                    render_pipeline.render(
-                        &mut encoder,
-                        &view,
-                        slice_pipeline.output_buffer(),
-                        wgpu::Color {
-                            r: bg[0] as f64,
-                            g: bg[1] as f64,
-                            b: bg[2] as f64,
-                            a: bg[3] as f64,
-                        },
-                    );
-
-                    // Submit
-                    ctx.queue.submit(std::iter::once(encoder.finish()));
-                    output.present();
+                    }
                 }
 
                 // Request next frame
