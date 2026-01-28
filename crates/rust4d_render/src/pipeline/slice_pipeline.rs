@@ -73,8 +73,22 @@ impl SlicePipeline {
     /// * `device` - The wgpu device
     /// * `max_triangles` - Maximum number of triangles to allocate buffer space for.
     ///   Each triangle requires 3 vertices × 48 bytes = 144 bytes.
-    ///   Default in config is 1,000,000 triangles (~144 MB GPU memory).
+    ///   Will be clamped to the GPU's max_storage_buffer_binding_size limit.
     pub fn new(device: &wgpu::Device, max_triangles: usize) -> Self {
+        // Calculate bytes per triangle and clamp to GPU limits
+        let bytes_per_triangle = TRIANGLE_VERTEX_COUNT * std::mem::size_of::<Vertex3D>();
+        let max_buffer_size = device.limits().max_storage_buffer_binding_size as usize;
+        let max_triangles_for_gpu = max_buffer_size / bytes_per_triangle;
+
+        let max_triangles = if max_triangles > max_triangles_for_gpu {
+            log::warn!(
+                "Requested {} triangles exceeds GPU limit of {} (max_storage_buffer_binding_size={}). Clamping.",
+                max_triangles, max_triangles_for_gpu, max_buffer_size
+            );
+            max_triangles_for_gpu
+        } else {
+            max_triangles
+        };
         // ===== Legacy 5-cell bind group layout =====
         let bind_group_layout_main = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Slice Main Bind Group Layout"),

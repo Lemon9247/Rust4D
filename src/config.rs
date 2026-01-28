@@ -231,7 +231,7 @@ pub struct RenderingConfig {
 impl Default for RenderingConfig {
     fn default() -> Self {
         Self {
-            max_triangles: 1_000_000,
+            max_triangles: 900_000,
             background_color: [0.02, 0.02, 0.08, 1.0],
             light_dir: [0.5, 1.0, 0.3],
             ambient_strength: 0.3,

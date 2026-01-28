@@ -29,7 +29,8 @@ jump_velocity = 16.0
 # Note: player_radius is configured in [scene] section
 
 [rendering]
-max_triangles = 1000000
+# Max triangles for slice output. Will be clamped to GPU limits (~932K for 128MB buffer).
+max_triangles = 900000
 background_color = [0.02, 0.02, 0.08, 1.0]
 light_dir = [0.5, 1.0, 0.3]
 ambient_strength = 0.3
