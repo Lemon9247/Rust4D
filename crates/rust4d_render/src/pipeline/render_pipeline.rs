@@ -285,45 +285,6 @@ impl RenderPipeline {
         // Use indirect drawing with the counter from compute shader
         render_pass.draw_indirect(&self.indirect_buffer, 0);
     }
-
-    /// Render with a known vertex count (for debugging/testing)
-    pub fn render_direct(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        vertex_buffer: &wgpu::Buffer,
-        vertex_count: u32,
-        clear_color: wgpu::Color,
-    ) {
-        let depth_view = self.depth_texture.as_ref().expect("Depth texture not created. Call ensure_depth_texture first.");
-
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-        render_pass.draw(0..vertex_count, 0..1);
-    }
 }
 
 /// Helper to create a perspective projection matrix

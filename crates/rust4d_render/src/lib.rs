@@ -27,4 +27,4 @@ pub use rust4d_core::{ConvexShape4D, Tetrahedron, Tesseract4D, Hyperplane4D};
 pub use rust4d_core::{Vec4, Rotor4, RotationPlane};
 
 // Re-export renderable for easy access
-pub use renderable::{RenderableGeometry, CheckerboardGeometry, position_gradient_color, blended_color};
+pub use renderable::{RenderableGeometry, CheckerboardGeometry, position_gradient_color};

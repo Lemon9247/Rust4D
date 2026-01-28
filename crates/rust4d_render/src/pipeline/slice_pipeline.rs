@@ -12,9 +12,6 @@ use super::types::{
 
 /// Compute pipeline for slicing 4D geometry
 pub struct SlicePipeline {
-    /// Maximum number of triangles this pipeline can output
-    max_triangles: usize,
-
     /// The compute pipeline for tetrahedra slicing
     pipeline: wgpu::ComputePipeline,
     /// Bind group layout for tetrahedra pipeline
@@ -31,8 +28,6 @@ pub struct SlicePipeline {
     output_buffer: wgpu::Buffer,
     /// Atomic counter buffer for triangle count
     counter_buffer: wgpu::Buffer,
-    /// Staging buffer for reading counter back to CPU
-    counter_staging_buffer: wgpu::Buffer,
     /// Slice parameters uniform buffer
     params_buffer: wgpu::Buffer,
 }
@@ -164,14 +159,6 @@ impl SlicePipeline {
             mapped_at_creation: false,
         });
 
-        // Create staging buffer for reading counter
-        let counter_staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Counter Staging Buffer"),
-            size: std::mem::size_of::<AtomicCounter>() as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         // Create params buffer
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Slice Params Buffer"),
@@ -181,7 +168,6 @@ impl SlicePipeline {
         });
 
         Self {
-            max_triangles,
             pipeline,
             bind_group_layout,
             vertex_buffer: None,
@@ -190,7 +176,6 @@ impl SlicePipeline {
             bind_group: None,
             output_buffer,
             counter_buffer,
-            counter_staging_buffer,
             params_buffer,
         }
     }
