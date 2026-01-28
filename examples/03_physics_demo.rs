@@ -57,10 +57,11 @@ impl App {
             physics.add_static_collider(StaticCollider::floor(floor_y, PhysicsMaterial::RUBBER));
         }
 
-        // Add visual floor entity
-        let floor_shape = Hyperplane4D::new(floor_y, 15.0, 10, 2.0, 0.001);
+        // Add visual floor entity (shape at y=0 local, positioned by transform)
+        let floor_shape = Hyperplane4D::new(15.0, 10, 2.0, 0.001);
+        let floor_transform = Transform4D::from_position(Vec4::new(0.0, floor_y, 0.0, 0.0));
         world.add_entity(
-            Entity::with_material(ShapeRef::shared(floor_shape), Material::GRAY)
+            Entity::with_transform(ShapeRef::shared(floor_shape), floor_transform, Material::GRAY)
                 .with_name("floor")
                 .with_tag("static"),
         );
