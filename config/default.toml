@@ -27,7 +27,6 @@ smoothing_enabled = false
 gravity = -20.0
 jump_velocity = 16.0
 # Note: player_radius is configured in [scene] section
-floor_y = -2.0
 
 [rendering]
 max_triangles = 1000000

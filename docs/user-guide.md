@@ -1210,8 +1210,6 @@ smoothing_enabled = false
 [physics]
 gravity = -20.0
 jump_velocity = 8.0
-player_radius = 0.5
-floor_y = -2.0
 
 [rendering]
 max_triangles = 1000000
