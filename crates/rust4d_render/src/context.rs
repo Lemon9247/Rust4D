@@ -17,8 +17,13 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
-    /// Create a new render context from a window
+    /// Create a new render context from a window with VSync enabled
     pub async fn new(window: Arc<Window>) -> Self {
+        Self::with_vsync(window, true).await
+    }
+
+    /// Create a new render context from a window with configurable VSync
+    pub async fn with_vsync(window: Arc<Window>, vsync: bool) -> Self {
         let size = window.inner_size();
 
         // Create wgpu instance
@@ -63,12 +68,18 @@ impl RenderContext {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
+        let present_mode = if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,

@@ -191,8 +191,10 @@ impl ApplicationHandler for App {
                     .expect("Failed to create window"),
             );
 
-            // Create render context
-            let render_context = pollster::block_on(RenderContext::new(window.clone()));
+            // Create render context with configured vsync
+            let render_context = pollster::block_on(
+                RenderContext::with_vsync(window.clone(), self.config.window.vsync)
+            );
 
             // Create pipelines
             let mut slice_pipeline = SlicePipeline::new(
