@@ -32,6 +32,10 @@ name = "rust4d"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "rust4d"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rust4d"
 path = "src/main.rs"
