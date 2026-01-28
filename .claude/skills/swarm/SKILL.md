@@ -2,7 +2,6 @@
 name: swarm
 description: Start a multi-agent task with hive-mind coordination for complex research or implementation
 argument-hint: [task description]
-disable-model-invocation: true
 ---
 
 # Multi-Agent Swarm Task
@@ -53,9 +52,10 @@ Initialize a swarm of agents to work on: **$ARGUMENTS**
 ## Coordination Notes
 - Each agent should write findings to separate markdown files in this folder
 - Focus areas: [list key areas to investigate]
+- **Cross-agent coordination**: Agents can read and write to this file to share discoveries, ask questions, or flag dependencies
 
 ## Questions for Discussion
-(Agents can add questions here for coordination)
+(Agents can add questions here - other agents should check this section and respond)
 
 ## Status
 - [ ] [Agent 1 Name]: [Status]
@@ -83,7 +83,7 @@ Your mission:
 Coordination:
 - Read the hive-mind file at scratchpad/reports/YYYY-MM-DD-<task>/hive-mind-<task>.md
 - Write your findings to scratchpad/reports/YYYY-MM-DD-<task>/<agent-name>-report.md
-- If you have questions for other agents, add them to the hive-mind file
+- **Cross-agent communication**: If you discover something relevant to other agents, or have questions, add them to the hive-mind file's "Questions for Discussion" section. Check this section periodically for questions from other agents that you can answer.
 
 Focus on [specific aspects]. Do not [any constraints].
 
@@ -126,5 +126,14 @@ When complete, summarize your key findings at the top of your report.
 
 1. Show the user the hive-mind file location
 2. Launch the agents in parallel using Task tool
-3. Wait for completion or provide status updates
-4. Write the synthesis report when all agents finish
+3. **Display status table** showing all agents and their current state:
+   ```
+   | Agent | Focus | Status |
+   |-------|-------|--------|
+   | Documentation Agent | READMEs, docs | Running |
+   | Architecture Agent | main.rs structure | Complete |
+   ```
+4. **Use TaskCreate/TaskUpdate** to track agent progress - create a task for each agent so progress is visible in the UI
+5. **Don't interrupt running agents** - avoid starting new unrelated work while agents are running. Wait for notifications that agents have completed.
+6. Update the status table as agents finish
+7. Write the synthesis report when all agents complete
