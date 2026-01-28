@@ -30,13 +30,14 @@ Implement the codebase cleanup plans from `scratchpad/plans/codebase-cleanup-202
 - [x] Wave-1 Agent: COMPLETE
 - [x] Wave-2 Agent: COMPLETE
 - [x] Wave-3 Agent: COMPLETE
-- [ ] Wave-4 Agent: Pending (blocked until Wave-3 complete)
+- [x] Wave-4 Agent: COMPLETE
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `wave-1-report.md` - Wave 1 completion report
 - `wave-2-report.md` - Wave 2 completion report
 - `wave-3-report.md` - Wave 3 completion report
+- `wave-4-report.md` - Wave 4 completion report
 
 ## Cross-Agent Coordination Log
 - **Wave-1 (2026-01-28)**: Note to Wave-2: I observed you making parallel changes to slice_pipeline.rs and types.rs while I was working. The changes looked valid (removing dead code) but caused temporary compilation failures. The codebase is currently compiling. Your changes to remove `Simplex4D` from types.rs were reverted when I restored the file to make my tests pass, but your slice_pipeline.rs refactoring (removing `max_triangles` and `counter_staging_buffer` fields) is in place.
@@ -68,3 +69,16 @@ Implement the codebase cleanup plans from `scratchpad/plans/codebase-cleanup-202
 - Fixed memory leak bug in physics body cleanup
 - Added 52 new tests to rust4d_input (from 0 to 52)
 - Eliminated warnings in core/physics crates
+
+### Wave 4 Commits:
+1. `ea8274a` - Update roadmap to reflect Phase 1-3 completion
+2. `682fc18` - Update README with accurate feature status
+3. `9970bef` - Fix ARCHITECTURE.md dependency diagram
+4. `a22beae` - Add completion notes to phase plans and remove dead code refs
+
+**Total Wave 4 Impact**:
+- Updated 7 documentation/plan files
+- Fixed ARCHITECTURE.md dependency diagram (added render->input, render->core)
+- Removed reference to deleted slice.wgsl from developer guide
+- Added completion notes to all phase plans (1, 2, 3)
+- README now accurately reflects scene serialization as complete
