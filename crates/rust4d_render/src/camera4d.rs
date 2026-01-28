@@ -162,7 +162,7 @@ impl Camera4D {
         let world_movement = mat4::transform(cam_mat, input);
 
         // Apply movement
-        self.position = self.position + world_movement;
+        self.position += world_movement;
     }
 
     /// Move in the camera-local XZ plane (forward/backward, left/right)

@@ -13,7 +13,7 @@ use std::path::Path;
 pub use rust4d_physics::PhysicsConfig;
 
 /// Main application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Window configuration
     #[serde(default)]
@@ -36,20 +36,6 @@ pub struct AppConfig {
     /// Scene configuration
     #[serde(default)]
     pub scene: SceneConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            window: WindowConfig::default(),
-            camera: CameraConfig::default(),
-            input: InputConfig::default(),
-            physics: PhysicsConfigToml::default(),
-            rendering: RenderingConfig::default(),
-            debug: DebugConfig::default(),
-            scene: SceneConfig::default(),
-        }
-    }
 }
 
 impl AppConfig {

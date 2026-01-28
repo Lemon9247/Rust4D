@@ -193,7 +193,7 @@ impl RigidBody4D {
 
     /// Apply a positional correction (e.g., from collision resolution)
     pub fn apply_correction(&mut self, correction: Vec4) {
-        self.position = self.position + correction;
+        self.position += correction;
         self.collider = self.collider.translated(correction);
     }
 }

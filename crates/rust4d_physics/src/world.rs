@@ -214,7 +214,7 @@ impl PhysicsWorld {
 
             // Integrate velocity into position
             let displacement = body.velocity * dt;
-            body.position = body.position + displacement;
+            body.position += displacement;
             body.collider = body.collider.translated(displacement);
         }
 
@@ -331,7 +331,7 @@ impl PhysicsWorld {
                             // Body is moving into the collider
                             // Remove the normal component of velocity and optionally bounce
                             let normal_velocity = contact.normal * velocity_along_normal;
-                            body.velocity = body.velocity - normal_velocity * (1.0 + combined.restitution);
+                            body.velocity -= normal_velocity * (1.0 + combined.restitution);
 
                             // Apply friction to horizontal (tangent) velocity
                             let tangent_velocity = body.velocity - contact.normal * body.velocity.dot(contact.normal);
@@ -488,7 +488,7 @@ impl PhysicsWorld {
             let vel_along_normal = self.bodies[key_a].velocity.dot(-contact.normal);
             if vel_along_normal < 0.0 {
                 let normal_velocity = -contact.normal * vel_along_normal;
-                self.bodies[key_a].velocity = self.bodies[key_a].velocity - normal_velocity * (1.0 + combined.restitution);
+                self.bodies[key_a].velocity -= normal_velocity * (1.0 + combined.restitution);
 
                 // Apply friction to tangent velocity
                 let tangent_velocity = self.bodies[key_a].velocity - (-contact.normal) * self.bodies[key_a].velocity.dot(-contact.normal);
@@ -505,7 +505,7 @@ impl PhysicsWorld {
             let vel_along_normal = self.bodies[key_b].velocity.dot(contact.normal);
             if vel_along_normal < 0.0 {
                 let normal_velocity = contact.normal * vel_along_normal;
-                self.bodies[key_b].velocity = self.bodies[key_b].velocity - normal_velocity * (1.0 + combined.restitution);
+                self.bodies[key_b].velocity -= normal_velocity * (1.0 + combined.restitution);
 
                 // Apply friction to tangent velocity
                 let tangent_velocity = self.bodies[key_b].velocity - contact.normal * self.bodies[key_b].velocity.dot(contact.normal);

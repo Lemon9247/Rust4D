@@ -108,6 +108,7 @@ pub fn skip_y(m: Mat4) -> Mat4 {
 /// Multiply two 4x4 matrices: result = a * b
 ///
 /// In column-major convention, this applies b first, then a.
+#[allow(clippy::needless_range_loop)]
 pub fn mul(a: Mat4, b: Mat4) -> Mat4 {
     let mut result = [[0.0f32; 4]; 4];
 

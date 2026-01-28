@@ -118,9 +118,9 @@ impl Tesseract4D {
             for omit in 0..5 {
                 let mut tet_verts = [0usize; 4];
                 let mut idx = 0;
-                for i in 0..5 {
+                for (i, &vert) in simplex.iter().enumerate() {
                     if i != omit {
-                        tet_verts[idx] = simplex[i];
+                        tet_verts[idx] = vert;
                         idx += 1;
                     }
                 }
