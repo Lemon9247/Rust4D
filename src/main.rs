@@ -190,7 +190,10 @@ impl ApplicationHandler for App {
             let render_context = pollster::block_on(RenderContext::new(window.clone()));
 
             // Create pipelines
-            let mut slice_pipeline = SlicePipeline::new(&render_context.device);
+            let mut slice_pipeline = SlicePipeline::new(
+                &render_context.device,
+                self.config.rendering.max_triangles as usize,
+            );
             let mut render_pipeline = RenderPipeline::new(
                 &render_context.device,
                 render_context.config.format,

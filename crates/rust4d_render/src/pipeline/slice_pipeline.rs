@@ -12,12 +12,15 @@ use wgpu::util::DeviceExt;
 use super::lookup_tables::{EDGE_TABLE, TRI_TABLE, EDGES};
 use super::types::{
     Simplex4D, SliceParams, Vertex3D, Vertex4D, GpuTetrahedron, AtomicCounter,
-    MAX_OUTPUT_TRIANGLES, TRIANGLE_VERTEX_COUNT,
+    TRIANGLE_VERTEX_COUNT,
 };
 
 /// Compute pipeline for slicing 4D geometry
 #[allow(dead_code)] // Fields hold GPU resources that must outlive bind groups
 pub struct SlicePipeline {
+    /// Maximum number of triangles this pipeline can output
+    max_triangles: usize,
+
     // ===== Legacy 5-cell pipeline =====
     /// The compute pipeline (legacy 5-cell)
     pipeline: wgpu::ComputePipeline,
@@ -64,8 +67,14 @@ pub struct SlicePipeline {
 }
 
 impl SlicePipeline {
-    /// Create a new slice pipeline
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// Create a new slice pipeline with the specified maximum triangle capacity
+    ///
+    /// # Arguments
+    /// * `device` - The wgpu device
+    /// * `max_triangles` - Maximum number of triangles to allocate buffer space for.
+    ///   Each triangle requires 3 vertices × 48 bytes = 144 bytes.
+    ///   Default in config is 1,000,000 triangles (~144 MB GPU memory).
+    pub fn new(device: &wgpu::Device, max_triangles: usize) -> Self {
         // ===== Legacy 5-cell bind group layout =====
         let bind_group_layout_main = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Slice Main Bind Group Layout"),
@@ -308,8 +317,8 @@ impl SlicePipeline {
             ],
         });
 
-        // Create output buffer
-        let output_size = (MAX_OUTPUT_TRIANGLES * TRIANGLE_VERTEX_COUNT * std::mem::size_of::<Vertex3D>()) as u64;
+        // Create output buffer sized by max_triangles parameter
+        let output_size = (max_triangles * TRIANGLE_VERTEX_COUNT * std::mem::size_of::<Vertex3D>()) as u64;
         let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Slice Output Buffer"),
             size: output_size,
@@ -342,6 +351,8 @@ impl SlicePipeline {
         });
 
         Self {
+            max_triangles,
+
             // Legacy 5-cell pipeline
             pipeline,
             bind_group_layout_main,
@@ -559,9 +570,17 @@ mod tests {
     // Integration tests should be used for full pipeline testing
 
     #[test]
-    fn test_output_buffer_size() {
-        let expected_size = MAX_OUTPUT_TRIANGLES * TRIANGLE_VERTEX_COUNT * std::mem::size_of::<Vertex3D>();
+    fn test_output_buffer_size_calculation() {
+        // Test the buffer size calculation for various triangle counts
+        let vertex_size = std::mem::size_of::<Vertex3D>();
+        assert_eq!(vertex_size, 48); // 48 bytes per vertex
+
         // 100,000 triangles * 3 vertices * 48 bytes = 14,400,000 bytes
-        assert_eq!(expected_size, 14_400_000);
+        let size_100k = 100_000 * TRIANGLE_VERTEX_COUNT * vertex_size;
+        assert_eq!(size_100k, 14_400_000);
+
+        // 1,000,000 triangles (config default) * 3 vertices * 48 bytes = 144,000,000 bytes
+        let size_1m = 1_000_000 * TRIANGLE_VERTEX_COUNT * vertex_size;
+        assert_eq!(size_1m, 144_000_000);
     }
 }

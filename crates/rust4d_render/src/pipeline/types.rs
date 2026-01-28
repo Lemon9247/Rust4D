@@ -204,7 +204,8 @@ pub struct AtomicCounter {
     pub count: u32,
 }
 
-/// Maximum number of output triangles from the compute shader
+/// Default maximum triangles for tests and fallback.
+/// Production code should use the value from config (rendering.max_triangles).
 pub const MAX_OUTPUT_TRIANGLES: usize = 100_000;
 
 /// Size of a single triangle in Vertex3D units (3 vertices)
