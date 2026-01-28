@@ -252,6 +252,12 @@ impl CameraController {
         self
     }
 
+    /// Builder: set W-axis rotation sensitivity
+    pub fn with_w_rotation_sensitivity(mut self, sensitivity: f32) -> Self {
+        self.w_rotation_sensitivity = sensitivity;
+        self
+    }
+
     /// Builder: set smoothing half-life (lower = more responsive)
     pub fn with_smoothing_half_life(mut self, half_life: f32) -> Self {
         self.smoothing_half_life = half_life;

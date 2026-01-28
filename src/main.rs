@@ -98,6 +98,7 @@ impl App {
             .with_move_speed(config.input.move_speed)
             .with_w_move_speed(config.input.w_move_speed)
             .with_mouse_sensitivity(config.input.mouse_sensitivity)
+            .with_w_rotation_sensitivity(config.input.w_rotation_sensitivity)
             .with_smoothing_half_life(config.input.smoothing_half_life)
             .with_smoothing(config.input.smoothing_enabled);
 
