@@ -323,20 +323,15 @@ fn test_scene_dynamic_entity_falls_to_floor() {
     );
 }
 
-/// Test with actual scene file if it exists
+/// Test with actual scene file (requires scenes/default.ron to exist)
+///
+/// Run with: cargo test --test physics_integration test_load_default_scene_file -- --ignored
 #[test]
+#[ignore = "Requires scenes/default.ron to exist"]
 fn test_load_default_scene_file() {
     // Try to load the actual default.ron scene
-    let scene_result = Scene::load("../../../scenes/default.ron");
-
-    // If the file doesn't exist, skip this test
-    let scene = match scene_result {
-        Ok(s) => s,
-        Err(_) => {
-            println!("Skipping test_load_default_scene_file: scenes/default.ron not found");
-            return;
-        }
-    };
+    let scene = Scene::load("../../../scenes/default.ron")
+        .expect("scenes/default.ron should exist for this test");
 
     // Instantiate scene
     let mut active = ActiveScene::from_template(&scene, None, 0.5);
@@ -360,8 +355,6 @@ fn test_load_default_scene_file() {
     // Get final position
     let (_, entity) = active.world.get_by_name("tesseract").unwrap();
     let final_y = entity.transform.position.y;
-
-    println!("Default scene test: initial_y={}, final_y={}", initial_y, final_y);
 
     // Tesseract should have fallen
     assert!(

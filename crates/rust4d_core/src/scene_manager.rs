@@ -222,8 +222,8 @@ impl SceneManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Entity, Material, ShapeRef};
-    use rust4d_math::{Tesseract4D, Vec4};
+    use crate::{Entity, ShapeRef};
+    use rust4d_math::Tesseract4D;
 
     fn make_test_entity() -> Entity {
         let tesseract = Tesseract4D::new(2.0);
