@@ -248,7 +248,7 @@ Each crate has a focused responsibility, enabling parallel development and clean
 
 ### rust4d_math
 
-**Location**: `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_math/`
+**Location**: `crates/rust4d_math/`
 
 The foundational math library with no internal dependencies.
 
@@ -279,7 +279,7 @@ Key features:
 
 4D rotations use rotors instead of matrices. See the Key Algorithms section for details.
 
-**File**: `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_math/src/rotor4.rs`
+**File**: `crates/rust4d_math/src/rotor4.rs`
 
 #### Shape Trait System
 
@@ -315,7 +315,7 @@ Current implementations:
 
 ### rust4d_core
 
-**Location**: `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_core/`
+**Location**: `crates/rust4d_core/`
 
 Provides entity management, world container, and scene serialization.
 
@@ -394,7 +394,7 @@ Scene(
 
 ### rust4d_physics
 
-**Location**: `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_physics/`
+**Location**: `crates/rust4d_physics/`
 
 4D physics simulation with collision detection and response.
 
@@ -420,7 +420,7 @@ The physics step:
 
 #### Collision Algorithms
 
-All collision functions are in `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_physics/src/collision.rs`.
+All collision functions are in `crates/rust4d_physics/src/collision.rs`.
 
 Supported collision pairs:
 - AABB vs AABB: 4D axis-aligned bounding box intersection
@@ -446,7 +446,7 @@ Response algorithm:
 
 ### rust4d_render
 
-**Location**: `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_render/`
+**Location**: `crates/rust4d_render/`
 
 GPU rendering using WGPU.
 
@@ -492,7 +492,7 @@ pub struct SlicePipeline {
 
 #### Slicing Compute Shader
 
-The shader at `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_render/src/shaders/slice_tetra.wgsl` performs:
+The shader at `crates/rust4d_render/src/shaders/slice_tetra.wgsl` performs:
 
 1. Transform vertices to camera space
 2. Compute which vertices are above/below the slice plane
@@ -510,7 +510,7 @@ Each frame:
 
 ### rust4d_input
 
-**Location**: `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_input/`
+**Location**: `crates/rust4d_input/`
 
 Input handling for 4D camera control.
 
@@ -844,7 +844,7 @@ Conventions:
 
 Integration tests go in the `tests/` directory:
 
-**File**: `/home/lemoneater/Projects/Personal/Rust4D/crates/rust4d_core/tests/physics_integration.rs`
+**File**: `crates/rust4d_core/tests/physics_integration.rs`
 
 Structure:
 1. **Scene Loading Tests**: Verify scene instantiation creates correct physics

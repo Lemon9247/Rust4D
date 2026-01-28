@@ -275,12 +275,12 @@ if let Some(entity) = world.get_mut(key) {
 let removed = world.remove(key);
 
 // Query by name
-if let Some(key) = world.find_by_name("player") {
+if let Some((key, _entity)) = world.get_by_name("player") {
     // ...
 }
 
 // Query by tag
-for entity in world.iter_with_tag("dynamic") {
+for (_key, entity) in world.get_by_tag("dynamic") {
     // Process all entities tagged "dynamic"
 }
 
@@ -1099,20 +1099,20 @@ let mut scene_manager = SceneManager::new();
 let scene_data = std::fs::read_to_string("scenes/default.ron")?;
 let scene: Scene = ron::from_str(&scene_data)?;
 
-// Register scene
-scene_manager.register("default", scene);
+// Register scene template
+scene_manager.register_template(scene);
 
-// Switch to scene
-scene_manager.switch_to("default", &mut world)?;
+// Instantiate scene (creates runtime ActiveScene from template)
+scene_manager.instantiate("Default Scene")?;
 
-// Push overlay scene (e.g., pause menu)
-scene_manager.push("pause_menu", &mut world)?;
+// Push scene onto the active stack
+scene_manager.push_scene("Default Scene")?;
 
-// Pop overlay
-scene_manager.pop(&mut world)?;
+// Switch to a different scene (replaces top of stack)
+scene_manager.switch_to("Other Scene")?;
 
-// Instantiate scene into world
-scene_manager.instantiate("default", &mut world)?;
+// Pop overlay scene from stack
+scene_manager.pop_scene();
 ```
 
 #### Scene Stack
@@ -1479,17 +1479,18 @@ fn setup_camera() -> (Camera4D, CameraController) {
 #### Scene Loading
 
 ```rust
-use rust4d_core::{Scene, SceneManager, World};
+use rust4d_core::{Scene, SceneManager};
 
-fn load_scene(path: &str, world: &mut World) -> Result<(), Box<dyn std::error::Error>> {
+fn load_scene(path: &str) -> Result<SceneManager, Box<dyn std::error::Error>> {
     let scene_data = std::fs::read_to_string(path)?;
     let scene: Scene = ron::from_str(&scene_data)?;
 
     let mut manager = SceneManager::new();
-    manager.register("loaded", scene);
-    manager.switch_to("loaded", world)?;
+    manager.register_template(scene.clone());
+    manager.instantiate(&scene.name)?;
+    manager.push_scene(&scene.name)?;
 
-    Ok(())
+    Ok(manager)
 }
 ```
 
