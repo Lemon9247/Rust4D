@@ -311,29 +311,19 @@ impl ApplicationHandler for App {
                 let w_input = self.controller.get_w_input();
 
                 // 2. Calculate movement direction in world space using camera orientation
-                // Get camera forward/right projected onto XZ plane (horizontal movement only)
+                // Get camera direction vectors
                 let camera_forward = self.camera.forward();
                 let camera_right = self.camera.right();
-
-                // Project to XZ plane (zero out Y for horizontal movement)
-                let forward_xz = Vec4::new(camera_forward.x, 0.0, camera_forward.z, 0.0).normalized();
-                let right_xz = Vec4::new(camera_right.x, 0.0, camera_right.z, 0.0).normalized();
-
-                // Get camera's W (ana) direction, projected to horizontal (XZW) plane
                 let camera_ana = self.camera.ana();
+
+                // Project all directions to XZW hyperplane (zero out Y for horizontal movement)
+                // This ensures all movement rotates correctly in 4D space
+                let forward_xzw = Vec4::new(camera_forward.x, 0.0, camera_forward.z, camera_forward.w).normalized();
+                let right_xzw = Vec4::new(camera_right.x, 0.0, camera_right.z, camera_right.w).normalized();
                 let ana_xzw = Vec4::new(camera_ana.x, 0.0, camera_ana.z, camera_ana.w).normalized();
 
-                // DEBUG: Print ana values when W movement is active
-                if w_input.abs() > 0.0 {
-                    let move_from_w = ana_xzw * w_input;
-                    eprintln!("DEBUG W-move: ana()=({:.2},{:.2},{:.2},{:.2}) | projected=({:.2},{:.2},{:.2},{:.2}) | movement=({:.2},{:.2},{:.2},{:.2})",
-                        camera_ana.x, camera_ana.y, camera_ana.z, camera_ana.w,
-                        ana_xzw.x, ana_xzw.y, ana_xzw.z, ana_xzw.w,
-                        move_from_w.x, move_from_w.y, move_from_w.z, move_from_w.w);
-                }
-
-                // Combine movement direction (all axes from camera orientation)
-                let move_dir = forward_xz * forward_input + right_xz * right_input
+                // Combine movement direction (all axes rotate with 4D camera orientation)
+                let move_dir = forward_xzw * forward_input + right_xzw * right_input
                     + ana_xzw * w_input;
 
                 // 3. Apply movement to player via unified physics world (includes W for true 4D physics)
