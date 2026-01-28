@@ -28,13 +28,14 @@ Implement the codebase cleanup plans from `scratchpad/plans/codebase-cleanup-202
 
 ## Status
 - [x] Wave-1 Agent: COMPLETE
-- [ ] Wave-2 Agent: Pending (in progress - parallel)
+- [x] Wave-2 Agent: COMPLETE
 - [ ] Wave-3 Agent: Pending (blocked by Wave-1) - Can start now!
 - [ ] Wave-4 Agent: Pending (blocked by all)
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `wave-1-report.md` - Wave 1 completion report
+- `wave-2-report.md` - Wave 2 completion report
 
 ## Cross-Agent Coordination Log
 - **Wave-1 (2026-01-28)**: Note to Wave-2: I observed you making parallel changes to slice_pipeline.rs and types.rs while I was working. The changes looked valid (removing dead code) but caused temporary compilation failures. The codebase is currently compiling. Your changes to remove `Simplex4D` from types.rs were reverted when I restored the file to make my tests pass, but your slice_pipeline.rs refactoring (removing `max_triangles` and `counter_staging_buffer` fields) is in place.
@@ -48,3 +49,11 @@ Implement the codebase cleanup plans from `scratchpad/plans/codebase-cleanup-202
 3. `33184e1` - Apply window.fullscreen config on startup
 4. `aa873e3` - Connect window.vsync to wgpu present mode
 5. `bccf910` - Add w_rotation_sensitivity config connection
+
+### Wave 2 Commits:
+1. `4f61f60` - Remove dead player.rs module from rust4d_physics (~338 lines)
+2. `efe95f7` - Remove legacy Simplex4D pipeline and slice.wgsl shader (~1,094 lines)
+3. `77dd363` - Remove stored thickness field from Hyperplane4D (~3 lines)
+4. `333a176` - Clean up dead code and unused utilities (~115 lines)
+
+**Total Wave 2 Impact**: ~1,550 lines of dead code removed
