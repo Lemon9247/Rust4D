@@ -35,6 +35,10 @@ background_color = [0.02, 0.02, 0.08, 1.0]
 light_dir = [0.5, 1.0, 0.3]
 ambient_strength = 0.3
 diffuse_strength = 0.7
+# W-axis color tinting (0.0 = no tint, 1.0 = full tint)
+w_color_strength = 0.5
+# W-axis distance for full color effect
+w_range = 2.0
 
 [debug]
 show_overlay = false

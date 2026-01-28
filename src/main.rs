@@ -457,8 +457,8 @@ impl ApplicationHandler for App {
                         _padding: 0.0,
                         ambient_strength: self.config.rendering.ambient_strength,
                         diffuse_strength: self.config.rendering.diffuse_strength,
-                        w_color_strength: 0.5,
-                        w_range: 2.0,
+                        w_color_strength: self.config.rendering.w_color_strength,
+                        w_range: self.config.rendering.w_range,
                     };
                     render_pipeline.update_uniforms(&ctx.queue, &render_uniforms);
 
