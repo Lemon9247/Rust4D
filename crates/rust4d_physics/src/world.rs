@@ -6,17 +6,22 @@ use crate::shapes::{Collider, Sphere4D};
 use rust4d_math::Vec4;
 use slotmap::SlotMap;
 
+use serde::{Serialize, Deserialize};
+
 /// Configuration for the physics simulation
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PhysicsConfig {
     /// Gravity acceleration (applied to Y-axis, negative = down)
     pub gravity: f32,
+    /// Jump velocity for player
+    pub jump_velocity: f32,
 }
 
 impl Default for PhysicsConfig {
     fn default() -> Self {
         Self {
             gravity: -20.0,
+            jump_velocity: 8.0,
         }
     }
 }
@@ -24,12 +29,18 @@ impl Default for PhysicsConfig {
 impl PhysicsConfig {
     /// Create a new physics config with the given gravity
     pub fn new(gravity: f32) -> Self {
-        Self { gravity }
+        Self {
+            gravity,
+            jump_velocity: 8.0,
+        }
+    }
+
+    /// Create a physics config with both gravity and jump velocity
+    pub fn with_jump_velocity(mut self, jump_velocity: f32) -> Self {
+        self.jump_velocity = jump_velocity;
+        self
     }
 }
-
-/// Default jump velocity for player
-pub const DEFAULT_JUMP_VELOCITY: f32 = 8.0;
 
 /// The physics world containing all rigid bodies
 pub struct PhysicsWorld {
@@ -53,12 +64,13 @@ impl PhysicsWorld {
 
     /// Create a new physics world with custom configuration
     pub fn with_config(config: PhysicsConfig) -> Self {
+        let jump_velocity = config.jump_velocity;
         Self {
             bodies: SlotMap::with_key(),
             static_colliders: Vec::new(),
             config,
             player_body: None,
-            player_jump_velocity: DEFAULT_JUMP_VELOCITY,
+            player_jump_velocity: jump_velocity,
         }
     }
 
@@ -956,9 +968,9 @@ mod tests {
         assert!(jumped);
         assert!(!world.player_is_grounded());
 
-        // Check velocity set
+        // Check velocity set (default jump_velocity is 8.0)
         let vel = world.player().unwrap().velocity;
-        assert_eq!(vel.y, DEFAULT_JUMP_VELOCITY);
+        assert_eq!(vel.y, 8.0);
     }
 
     #[test]

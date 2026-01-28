@@ -52,8 +52,10 @@ impl App {
         });
 
         // Create scene manager and load scene from file
+        // Pass physics config from TOML to the physics engine
         let mut scene_manager = SceneManager::new()
-            .with_player_radius(config.scene.player_radius);
+            .with_player_radius(config.scene.player_radius)
+            .with_physics(config.physics.to_physics_config());
 
         // Load scene from configured path
         let scene_name = scene_manager.load_scene(&config.scene.path)
@@ -419,10 +421,10 @@ impl ApplicationHandler for App {
                     // Create view and projection matrices
                     let aspect = ctx.aspect_ratio();
                     let proj_matrix = perspective_matrix(
-                        std::f32::consts::FRAC_PI_4,
+                        self.config.camera.fov.to_radians(),
                         aspect,
-                        0.1,
-                        100.0,
+                        self.config.camera.near,
+                        self.config.camera.far,
                     );
 
                     // The slice shader transforms 4D geometry to camera space:
@@ -440,10 +442,10 @@ impl ApplicationHandler for App {
                     let render_uniforms = RenderUniforms {
                         view_matrix,
                         projection_matrix: proj_matrix,
-                        light_dir: [0.5, 1.0, 0.3],
+                        light_dir: self.config.rendering.light_dir,
                         _padding: 0.0,
-                        ambient_strength: 0.3,
-                        diffuse_strength: 0.7,
+                        ambient_strength: self.config.rendering.ambient_strength,
+                        diffuse_strength: self.config.rendering.diffuse_strength,
                         w_color_strength: 0.5,
                         w_range: 2.0,
                     };
@@ -488,15 +490,16 @@ impl ApplicationHandler for App {
                     render_pipeline.prepare_indirect_draw(&mut encoder, slice_pipeline.counter_buffer());
 
                     // Render pass
+                    let bg = &self.config.rendering.background_color;
                     render_pipeline.render(
                         &mut encoder,
                         &view,
                         slice_pipeline.output_buffer(),
                         wgpu::Color {
-                            r: 0.02,
-                            g: 0.02,
-                            b: 0.08,
-                            a: 1.0,
+                            r: bg[0] as f64,
+                            g: bg[1] as f64,
+                            b: bg[2] as f64,
+                            a: bg[3] as f64,
                         },
                     );
 

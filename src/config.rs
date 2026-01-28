@@ -9,6 +9,9 @@ use figment::{Figment, providers::{Format, Toml, Env}};
 use serde::{Serialize, Deserialize};
 use std::path::Path;
 
+// Re-export PhysicsConfig from the physics crate for convenience
+pub use rust4d_physics::PhysicsConfig;
+
 /// Main application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -23,7 +26,7 @@ pub struct AppConfig {
     pub input: InputConfig,
     /// Physics configuration
     #[serde(default)]
-    pub physics: PhysicsConfig,
+    pub physics: PhysicsConfigToml,
     /// Rendering configuration
     #[serde(default)]
     pub rendering: RenderingConfig,
@@ -41,7 +44,7 @@ impl Default for AppConfig {
             window: WindowConfig::default(),
             camera: CameraConfig::default(),
             input: InputConfig::default(),
-            physics: PhysicsConfig::default(),
+            physics: PhysicsConfigToml::default(),
             rendering: RenderingConfig::default(),
             debug: DebugConfig::default(),
             scene: SceneConfig::default(),
@@ -176,26 +179,44 @@ impl Default for InputConfig {
     }
 }
 
-/// Physics configuration
+/// Physics configuration from TOML
+///
+/// This wraps the core PhysicsConfig with additional scene-level settings.
+/// The `gravity` and `jump_velocity` fields are passed to the physics engine,
+/// while `floor_y` is used during scene setup.
+///
+/// Note: `player_radius` was moved to `[scene]` section to avoid duplication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PhysicsConfig {
+pub struct PhysicsConfigToml {
     /// Gravity (negative = downward)
     pub gravity: f32,
     /// Jump velocity
     pub jump_velocity: f32,
-    /// Player collision radius
-    pub player_radius: f32,
-    /// Floor Y position
+    /// Floor Y position (used by scene setup, not physics engine)
+    #[serde(default = "default_floor_y")]
     pub floor_y: f32,
 }
 
-impl Default for PhysicsConfig {
+fn default_floor_y() -> f32 {
+    -2.0
+}
+
+impl Default for PhysicsConfigToml {
     fn default() -> Self {
         Self {
             gravity: -20.0,
             jump_velocity: 8.0,
-            player_radius: 0.5,
             floor_y: -2.0,
+        }
+    }
+}
+
+impl PhysicsConfigToml {
+    /// Convert to the physics engine's PhysicsConfig
+    pub fn to_physics_config(&self) -> PhysicsConfig {
+        PhysicsConfig {
+            gravity: self.gravity,
+            jump_velocity: self.jump_velocity,
         }
     }
 }
