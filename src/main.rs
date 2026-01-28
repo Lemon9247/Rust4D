@@ -319,9 +319,13 @@ impl ApplicationHandler for App {
                 let forward_xz = Vec4::new(camera_forward.x, 0.0, camera_forward.z, 0.0).normalized();
                 let right_xz = Vec4::new(camera_right.x, 0.0, camera_right.z, 0.0).normalized();
 
-                // Combine movement direction (XZ from camera orientation, W from direct input)
+                // Get camera's W (ana) direction, projected to horizontal (XZW) plane
+                let camera_ana = self.camera.ana();
+                let ana_xzw = Vec4::new(camera_ana.x, 0.0, camera_ana.z, camera_ana.w).normalized();
+
+                // Combine movement direction (all axes from camera orientation)
                 let move_dir = forward_xz * forward_input + right_xz * right_input
-                    + Vec4::W * w_input;
+                    + ana_xzw * w_input;
 
                 // 3. Apply movement to player via unified physics world (includes W for true 4D physics)
                 let move_speed = self.controller.move_speed;
