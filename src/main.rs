@@ -3,15 +3,17 @@
 //! A 4D rendering engine that displays 3D cross-sections of 4D geometry.
 
 mod config;
+mod systems;
 
-use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::{CursorGrabMode, Fullscreen, Window, WindowId},
+    window::WindowId,
 };
+
+use systems::WindowSystem;
 
 use rust4d_core::{World, SceneManager};
 use rust4d_render::{
@@ -29,7 +31,8 @@ use config::AppConfig;
 struct App {
     /// Application configuration
     config: AppConfig,
-    window: Option<Arc<Window>>,
+    /// Window system (created on resume)
+    window_system: Option<WindowSystem>,
     render_context: Option<RenderContext>,
     slice_pipeline: Option<SlicePipeline>,
     render_pipeline: Option<RenderPipeline>,
@@ -40,7 +43,6 @@ struct App {
     camera: Camera4D,
     controller: CameraController,
     last_frame: std::time::Instant,
-    cursor_captured: bool,
 }
 
 impl App {
@@ -104,7 +106,7 @@ impl App {
 
         Self {
             config,
-            window: None,
+            window_system: None,
             render_context: None,
             slice_pipeline: None,
             render_pipeline: None,
@@ -113,7 +115,6 @@ impl App {
             camera,
             controller,
             last_frame: std::time::Instant::now(),
-            cursor_captured: false,
         }
     }
 
@@ -143,58 +144,18 @@ impl App {
         geometry
     }
 
-    /// Capture cursor for FPS-style controls
-    fn capture_cursor(&mut self) {
-        if let Some(window) = &self.window {
-            // Try Locked mode first (best for FPS), fall back to Confined
-            let grab_result = window.set_cursor_grab(CursorGrabMode::Locked)
-                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-
-            if grab_result.is_ok() {
-                window.set_cursor_visible(false);
-                self.cursor_captured = true;
-                log::info!("Cursor captured - Escape to release");
-            } else {
-                log::warn!("Failed to capture cursor");
-            }
-        }
-    }
-
-    /// Release cursor
-    fn release_cursor(&mut self) {
-        if let Some(window) = &self.window {
-            let _ = window.set_cursor_grab(CursorGrabMode::None);
-            window.set_cursor_visible(true);
-            self.cursor_captured = false;
-            log::info!("Cursor released - click to capture");
-        }
-    }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            let mut window_attributes = Window::default_attributes()
-                .with_title(&self.config.window.title)
-                .with_inner_size(winit::dpi::LogicalSize::new(
-                    self.config.window.width,
-                    self.config.window.height,
-                ));
-
-            // Apply fullscreen from config
-            if self.config.window.fullscreen {
-                window_attributes = window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
-            }
-
-            let window = Arc::new(
-                event_loop
-                    .create_window(window_attributes)
-                    .expect("Failed to create window"),
-            );
+        if self.window_system.is_none() {
+            // Create window system
+            let window_system = WindowSystem::create(event_loop, &self.config.window)
+                .expect("Failed to create window");
 
             // Create render context with configured vsync
             let render_context = pollster::block_on(
-                RenderContext::with_vsync(window.clone(), self.config.window.vsync)
+                RenderContext::with_vsync(window_system.window().clone(), self.config.window.vsync)
             );
 
             // Create pipelines
@@ -224,7 +185,7 @@ impl ApplicationHandler for App {
             log::info!("Loaded {} vertices and {} tetrahedra",
                 self.geometry.vertex_count(), self.geometry.tetrahedron_count());
 
-            self.window = Some(window);
+            self.window_system = Some(window_system);
             self.render_context = Some(render_context);
             self.slice_pipeline = Some(slice_pipeline);
             self.render_pipeline = Some(render_pipeline);
@@ -259,10 +220,12 @@ impl ApplicationHandler for App {
                         match key {
                             KeyCode::Escape => {
                                 // Escape releases cursor first, then exits if pressed again
-                                if self.cursor_captured {
-                                    self.release_cursor();
-                                } else {
-                                    event_loop.exit();
+                                if let Some(ws) = &mut self.window_system {
+                                    if ws.is_cursor_captured() {
+                                        ws.release_cursor();
+                                    } else {
+                                        event_loop.exit();
+                                    }
                                 }
                                 return;
                             }
@@ -271,13 +234,8 @@ impl ApplicationHandler for App {
                                 log::info!("Camera reset to starting position");
                             }
                             KeyCode::KeyF => {
-                                if let Some(window) = &self.window {
-                                    let new_fullscreen = if window.fullscreen().is_some() {
-                                        None
-                                    } else {
-                                        Some(Fullscreen::Borderless(None))
-                                    };
-                                    window.set_fullscreen(new_fullscreen);
+                                if let Some(ws) = &self.window_system {
+                                    ws.toggle_fullscreen();
                                 }
                             }
                             KeyCode::KeyG => {
@@ -294,8 +252,12 @@ impl ApplicationHandler for App {
 
             WindowEvent::MouseInput { state, button, .. } => {
                 // Click to capture cursor (FPS style)
-                if state == ElementState::Pressed && button == MouseButton::Left && !self.cursor_captured {
-                    self.capture_cursor();
+                if state == ElementState::Pressed && button == MouseButton::Left {
+                    if let Some(ws) = &mut self.window_system {
+                        if !ws.is_cursor_captured() {
+                            ws.capture_cursor();
+                        }
+                    }
                 }
                 self.controller.process_mouse_button(button, state);
             }
@@ -380,7 +342,8 @@ impl ApplicationHandler for App {
                 // 8. Apply mouse look for camera rotation only
                 // Note: controller.update() also applies movement which we don't want,
                 // but we re-sync position below to discard the unwanted movement
-                self.controller.update(&mut self.camera, dt, self.cursor_captured);
+                let cursor_captured = self.window_system.as_ref().map(|ws| ws.is_cursor_captured()).unwrap_or(false);
+                self.controller.update(&mut self.camera, dt, cursor_captured);
 
                 // 9. Re-sync position after controller (discard its movement, keep rotation)
                 if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
@@ -388,21 +351,9 @@ impl ApplicationHandler for App {
                 }
 
                 // Update window title with debug info
-                if let Some(window) = &self.window {
+                if let Some(ws) = &self.window_system {
                     let pos = self.camera.position;
-                    let base_title = &self.config.window.title;
-                    let title = if self.cursor_captured {
-                        format!(
-                            "{} - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Esc to release]",
-                            base_title, pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
-                        )
-                    } else {
-                        format!(
-                            "{} - ({:.1}, {:.1}, {:.1}, {:.1}) W:{:.2} [Click to capture]",
-                            base_title, pos.x, pos.y, pos.z, pos.w, self.camera.get_slice_w()
-                        )
-                    };
-                    window.set_title(&title);
+                    ws.update_title([pos.x, pos.y, pos.z, pos.w], self.camera.get_slice_w());
                 }
 
                 // Render
@@ -469,8 +420,8 @@ impl ApplicationHandler for App {
                             if let Some(ctx) = &mut self.render_context {
                                 ctx.resize(ctx.size);
                             }
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
+                            if let Some(ws) = &self.window_system {
+                                ws.request_redraw();
                             }
                             return;
                         }
@@ -520,8 +471,8 @@ impl ApplicationHandler for App {
                 }
 
                 // Request next frame
-                if let Some(window) = &self.window {
-                    window.request_redraw();
+                if let Some(ws) = &self.window_system {
+                    ws.request_redraw();
                 }
             }
 
