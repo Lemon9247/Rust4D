@@ -173,12 +173,17 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            let window_attributes = Window::default_attributes()
+            let mut window_attributes = Window::default_attributes()
                 .with_title(&self.config.window.title)
                 .with_inner_size(winit::dpi::LogicalSize::new(
                     self.config.window.width,
                     self.config.window.height,
                 ));
+
+            // Apply fullscreen from config
+            if self.config.window.fullscreen {
+                window_attributes = window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
 
             let window = Arc::new(
                 event_loop
