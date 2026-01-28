@@ -15,7 +15,7 @@ use winit::{
 };
 
 use input::{InputMapper, InputAction};
-use systems::WindowSystem;
+use systems::{SimulationSystem, WindowSystem};
 
 use rust4d_core::{World, SceneManager};
 use rust4d_render::{
@@ -44,7 +44,8 @@ struct App {
     geometry: RenderableGeometry,
     camera: Camera4D,
     controller: CameraController,
-    last_frame: std::time::Instant,
+    /// Simulation system for game loop
+    simulation: SimulationSystem,
 }
 
 impl App {
@@ -116,7 +117,7 @@ impl App {
             geometry,
             camera,
             controller,
-            last_frame: std::time::Instant::now(),
+            simulation: SimulationSystem::new(),
         }
     }
 
@@ -280,56 +281,21 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                // Calculate delta time
-                let now = std::time::Instant::now();
-                let raw_dt = (now - self.last_frame).as_secs_f32();
-                // Cap dt to prevent huge physics steps on first frame or after window focus
-                let dt = raw_dt.min(1.0 / 30.0); // Max 33ms per frame
-                self.last_frame = now;
+                // Run simulation
+                let cursor_captured = self.window_system.as_ref()
+                    .map(|ws| ws.is_cursor_captured())
+                    .unwrap_or(false);
 
-                // === PHYSICS-BASED GAME LOOP ===
+                let result = self.simulation.update(
+                    &mut self.scene_manager,
+                    &mut self.camera,
+                    &mut self.controller,
+                    cursor_captured,
+                );
 
-                // 1. Get movement input from controller
-                let (forward_input, right_input) = self.controller.get_movement_input();
-                let w_input = self.controller.get_w_input();
-
-                // 2. Calculate movement direction in world space using camera orientation
-                // Get camera direction vectors
-                let camera_forward = self.camera.forward();
-                let camera_right = self.camera.right();
-                let camera_ana = self.camera.ana();
-
-                // Project all directions to XZW hyperplane (zero out Y for horizontal movement)
-                // This ensures all movement rotates correctly in 4D space
-                let forward_xzw = Vec4::new(camera_forward.x, 0.0, camera_forward.z, camera_forward.w).normalized();
-                let right_xzw = Vec4::new(camera_right.x, 0.0, camera_right.z, camera_right.w).normalized();
-                let ana_xzw = Vec4::new(camera_ana.x, 0.0, camera_ana.z, camera_ana.w).normalized();
-
-                // Combine movement direction (all axes rotate with 4D camera orientation)
-                let move_dir = forward_xzw * forward_input + right_xzw * right_input
-                    + ana_xzw * w_input;
-
-                // 3. Apply movement to player via unified physics world (includes W for true 4D physics)
-                let move_speed = self.controller.move_speed;
-                if let Some(physics) = self.scene_manager.active_world_mut().and_then(|w| w.physics_mut()) {
-                    physics.apply_player_movement(move_dir * move_speed);
-                }
-
-                // 4. Handle jump
-                if self.controller.consume_jump() {
-                    if let Some(physics) = self.scene_manager.active_world_mut().and_then(|w| w.physics_mut()) {
-                        physics.player_jump();
-                    }
-                }
-
-                // 5. Step world physics (tesseract + player dynamics) and sync entity transforms
-                self.scene_manager.update(dt);
-
-                // 6. Check for dirty entities and rebuild geometry if needed
-                if self.scene_manager.active_world().map(|w| w.has_dirty_entities()).unwrap_or(false) {
-                    // Rebuild geometry with new transforms
+                // Rebuild geometry if entities changed
+                if result.geometry_dirty {
                     self.geometry = Self::build_geometry(self.scene_manager.active_world().unwrap());
-                    // Re-upload to GPU
                     if let (Some(slice_pipeline), Some(ctx)) = (&mut self.slice_pipeline, &self.render_context) {
                         slice_pipeline.upload_tetrahedra(
                             &ctx.device,
@@ -340,22 +306,6 @@ impl ApplicationHandler for App {
                     if let Some(w) = self.scene_manager.active_world_mut() {
                         w.clear_all_dirty();
                     }
-                }
-
-                // 7. Sync camera position to player physics (all 4 dimensions for true 4D physics)
-                if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
-                    self.camera.position = pos;
-                }
-
-                // 8. Apply mouse look for camera rotation only
-                // Note: controller.update() also applies movement which we don't want,
-                // but we re-sync position below to discard the unwanted movement
-                let cursor_captured = self.window_system.as_ref().map(|ws| ws.is_cursor_captured()).unwrap_or(false);
-                self.controller.update(&mut self.camera, dt, cursor_captured);
-
-                // 9. Re-sync position after controller (discard its movement, keep rotation)
-                if let Some(pos) = self.scene_manager.active_world().and_then(|w| w.physics()).and_then(|p| p.player_position()) {
-                    self.camera.position = pos;
                 }
 
                 // Update window title with debug info
