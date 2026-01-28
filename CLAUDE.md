@@ -108,6 +108,13 @@ Key principles:
 - **Wait for agents to complete** before synthesizing results
 - **Use TaskCreate/TaskUpdate** to track agent progress in the UI
 
+## Parallel Agent Best Practices
+
+- **Use git worktrees** for parallel agents to avoid conflicts on shared files
+- **Hive-mind file** lets agents communicate about conflicts and dependencies
+- **Be aggressive with dead code** - no legacy preservation, no shims. If unused, delete it.
+- **Always wire up config values** - don't just define them, connect them to runtime behavior
+
 # Skills
 
 - `/plan [topic]` - Create a detailed implementation plan and save to scratchpad/plans
