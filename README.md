@@ -13,11 +13,12 @@ What works:
 - Basic 4D physics with gravity and collisions
 - Multiple 4D primitives (tesseract, hyperplane)
 - FPS-style camera controls with 4D extensions
+- Scene serialization and loading (RON format)
+- Configuration system (TOML with env var overrides)
 
 What's in progress:
 - More 4D shapes (hypersphere, 4D prisms)
 - Advanced collision detection
-- Scene serialization
 - Audio integration
 
 ## What is 4D Rendering?
