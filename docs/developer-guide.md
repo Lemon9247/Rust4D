@@ -464,7 +464,6 @@ crates/rust4d_render/src/
 │   └── types.rs         # GPU-compatible data structures
 ├── renderable.rs        # RenderableGeometry: World to GPU buffers
 └── shaders/
-    ├── slice.wgsl       # Legacy 5-cell slicing (compute)
     ├── slice_tetra.wgsl # Tetrahedra slicing (compute)
     └── render.wgsl      # 3D rendering (vertex + fragment)
 ```
