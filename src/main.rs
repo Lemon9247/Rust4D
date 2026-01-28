@@ -3,16 +3,18 @@
 //! A 4D rendering engine that displays 3D cross-sections of 4D geometry.
 
 mod config;
+mod input;
 mod systems;
 
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent},
+    event::{DeviceEvent, DeviceId, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{KeyCode, PhysicalKey},
+    keyboard::PhysicalKey,
     window::WindowId,
 };
 
+use input::{InputMapper, InputAction};
 use systems::WindowSystem;
 
 use rust4d_core::{World, SceneManager};
@@ -215,46 +217,52 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(key) = event.physical_key {
-                    // Handle special keys on press
-                    if event.state == ElementState::Pressed {
-                        match key {
-                            KeyCode::Escape => {
-                                // Escape releases cursor first, then exits if pressed again
+                    // Map to action via InputMapper
+                    let cursor_captured = self.window_system.as_ref()
+                        .map(|ws| ws.is_cursor_captured())
+                        .unwrap_or(false);
+
+                    if let Some(action) = InputMapper::map_keyboard(key, event.state, cursor_captured) {
+                        match action {
+                            InputAction::ToggleCursor => {
                                 if let Some(ws) = &mut self.window_system {
-                                    if ws.is_cursor_captured() {
-                                        ws.release_cursor();
-                                    } else {
-                                        event_loop.exit();
-                                    }
+                                    ws.release_cursor();
                                 }
-                                return;
                             }
-                            KeyCode::KeyR => {
+                            InputAction::Exit => {
+                                event_loop.exit();
+                            }
+                            InputAction::ResetCamera => {
                                 self.camera.reset();
                                 log::info!("Camera reset to starting position");
                             }
-                            KeyCode::KeyF => {
+                            InputAction::ToggleFullscreen => {
                                 if let Some(ws) = &self.window_system {
                                     ws.toggle_fullscreen();
                                 }
                             }
-                            KeyCode::KeyG => {
+                            InputAction::ToggleSmoothing => {
                                 let enabled = self.controller.toggle_smoothing();
                                 log::info!("Input smoothing: {}", if enabled { "ON" } else { "OFF" });
                             }
-                            _ => {}
                         }
+                        return;
                     }
+
                     // Pass to controller for movement keys
                     self.controller.process_keyboard(key, event.state);
                 }
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                // Click to capture cursor (FPS style)
-                if state == ElementState::Pressed && button == MouseButton::Left {
-                    if let Some(ws) = &mut self.window_system {
-                        if !ws.is_cursor_captured() {
+                // Map to action via InputMapper
+                let cursor_captured = self.window_system.as_ref()
+                    .map(|ws| ws.is_cursor_captured())
+                    .unwrap_or(false);
+
+                if let Some(action) = InputMapper::map_mouse_button(button, state, cursor_captured) {
+                    if action == InputAction::ToggleCursor {
+                        if let Some(ws) = &mut self.window_system {
                             ws.capture_cursor();
                         }
                     }
