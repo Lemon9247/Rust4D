@@ -1314,10 +1314,17 @@ If anything breaks, each commit is a rollback point. The branch can be abandoned
 
 ---
 
-## Decision Points for Review
+## Decisions (Resolved)
 
-1. **Config cleanup approach**: Remove unused debug config values, or add `#[allow(dead_code)]`?
-2. **Error handling depth**: Full Result propagation in main(), or keep .expect() for startup errors?
-3. **Test location**: Keep integration tests in main.rs, or move to tests/ directory?
+1. **Unused debug config** (`show_overlay`, `show_colliders`, `log_level`): **Keep them** - will be implemented later. No `#[allow(dead_code)]` needed since they're in config structs.
 
-Please review and approve, then we can begin implementation.
+2. **Error handling**: **Option A - Keep `.expect()` for startup errors.** Only use `Result` for runtime errors (surface lost, resize, etc.) that can be recovered. Full `Result` propagation in `main()` can be added later if needed.
+
+3. **Test location**: **Move integration tests to `tests/` directory.** Keep unit tests inline with modules.
+
+---
+
+## Future Improvements (Out of Scope)
+
+- Full `Result<(), AppError>` propagation from `main()` - currently using `.expect()` for startup errors which is acceptable
+- Implement `debug.show_overlay`, `debug.show_colliders`, `debug.log_level` config values
