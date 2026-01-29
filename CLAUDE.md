@@ -16,11 +16,12 @@ The reports that help most aren't just "what I did" but "what I was thinking" - 
 Rust4D/
 ├── src/                        # Main source code (when created)
 ├── tests/                      # Test suite
-├── scratchpad/                 # Working notes and session logs
+├── scratchpad/                 # Shared scratchpad (orphan branch worktree, gitignored)
 │   ├── reports/                # Session reports
 │   ├── plans/                  # Work plans and architecture documents
 │   ├── ideas/                  # Feature ideas and improvement proposals
 │   └── archive/                # Historical docs
+├── .scratchpad/                # Local throwaway temp files (gitignored)
 ├── CLAUDE.md                   # This file
 └── README.md                   # Project documentation
 ```
@@ -31,13 +32,13 @@ This project is written in Rust. Use `cargo` for building, testing, and running.
 
 # Work Planning
 
-1) All project notes, work logs and reports can be found in the scratchpad folder
+1) The **shared scratchpad** lives on an orphan `scratchpad` git branch, mounted as a worktree at `scratchpad/` in the repo root. It is gitignored on `main`. All project notes, work logs and reports live there. Run `git worktree list` to confirm it's mounted -- if not, mount it with `git worktree add scratchpad scratchpad`.
 
 2) When Claude first starts, it should review the latest work on the project by reviewing the git history and anything recent in the scratchpad
 
 3) When Claude is finished working on a long task, it should write a report on its work into a new timestamped markdown file in the scratchpad/reports folder. Session logs should be named `YYYY-MM-DD-HHMM-<topic>.md`. Use the `/report` skill to generate these.
 
-4) **Always commit scratchpad contents:** Never leave scratchpad files (reports, plans, swarm coordination files) uncommitted. These files are part of Claude's documentary memory and must be preserved in version control. When finishing a session or task, ensure all scratchpad changes are committed.
+4) **Always commit scratchpad contents:** The scratchpad is on its own branch. To commit: `cd scratchpad && git add . && git commit -m "message" && cd ..`. Never leave scratchpad files uncommitted -- these are part of Claude's documentary memory.
 
 5) When creating workplans or estimating effort, use **session-based estimates** instead of human hours:
    - A "session" is one Claude Code context window (~15-30 minutes of human interaction)
