@@ -95,4 +95,4 @@ Topic/focus: **$ARGUMENTS** (if blank, infer from conversation)
 
 1. Show the user the report location
 2. Offer to add anything they think is missing
-3. Suggest committing the report if appropriate
+3. Commit the report to the scratchpad branch: `cd scratchpad && git add . && git commit -m "Add session report: <topic>" && cd ..`

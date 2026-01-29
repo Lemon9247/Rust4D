@@ -137,3 +137,4 @@ When complete, summarize your key findings at the top of your report.
 5. **Don't interrupt running agents** - avoid starting new unrelated work while agents are running. Wait for notifications that agents have completed.
 6. Update the status table as agents finish
 7. Write the synthesis report when all agents complete
+8. Commit swarm reports to the scratchpad branch: `cd scratchpad && git add . && git commit -m "Add swarm reports: <task>" && cd ..`
