@@ -2,7 +2,6 @@
 name: report
 description: Write a session report documenting work completed and save to scratchpad/reports
 argument-hint: [topic or leave blank to auto-generate]
-disable-model-invocation: true
 ---
 
 # Write Session Report

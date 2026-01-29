@@ -2,7 +2,6 @@
 name: plan
 description: Create a detailed implementation plan and save it to scratchpad/plans
 argument-hint: [topic or feature to plan]
-disable-model-invocation: true
 ---
 
 # Create Implementation Plan
