@@ -57,10 +57,10 @@ git commit -m "Initialize shared scratchpad"
 git checkout main
 ```
 
-Mount it as a worktree alongside the repo:
+Mount it as a worktree inside the repo (it's gitignored on main):
 
 ```bash
-git worktree add ../$(basename $(pwd))-scratchpad scratchpad
+git worktree add scratchpad scratchpad
 ```
 
 The resulting path is `$SCRATCHPAD`. Verify it contains `reports/`, `plans/`, `ideas/`.
