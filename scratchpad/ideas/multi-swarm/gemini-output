@@ -1,0 +1,103 @@
+Here is the complete **`multi-swarm-orchestrator.md`** skill, formatted and ready for you to save into your agents' library. I’ve integrated the Shadow Branch logic directly into the setup steps to ensure your agents handle the infrastructure automatically.
+
+---
+
+# multi-swarm-orchestrator.md
+
+```markdown
+---
+name: multi-swarm
+description: Start or join a multi-agent task using a shared Git-backed scratchpad (Shadow Branch) to coordinate across multiple worktrees.
+argument-hint: [task description]
+---
+
+# Multi-Swarm Orchestrator
+
+Initialize a swarm of agents with cross-worktree awareness to work on: **$ARGUMENTS**
+
+## Phase 0: Infrastructure & Anchor Setup
+*Before spawning agents, ensure the shared "hallway" is connected.*
+
+1. **Verify Anchor**: Check for `.hive-anchor/` in the repository root.
+   - If missing, alert the user or run: `git worktree add .hive-anchor hive-mind-data`.
+2. **Establish Symlink**: Ensure a `scratchpad` directory exists in the current worktree.
+   - If it is a physical folder, move content to `.hive-anchor/scratchpad/` and replace the folder with a symlink: `ln -s .hive-anchor/scratchpad ./scratchpad`.
+3. **Local Exclusion**: Ensure `scratchpad/` is added to `.git/info/exclude` so this worktree doesn't try to commit the symlink itself.
+
+## Phase 1: Task Initialization
+
+1. **Namespace the Task Folder**:
+   - Create: `scratchpad/reports/YYYY-MM-DD-[branch-name]-[task-name]/`
+   - Using the branch name prevents collisions with swarms in other worktrees.
+
+2. **Create Hive-Mind Coordination File**:
+   - Create `hive-mind-[task].md` in the task folder using the template below.
+
+## Phase 2: Agent Deployment
+
+1. **Identify Specialized Agents**: (e.g., Research, Codebase, Architecture, Implementation, Testing).
+2. **Launch via Task Tool**: Spawn subagents and provide the **absolute path** to the shared hive-mind file.
+3. **Cross-Worktree Awareness**: Instruct agents to check `scratchpad/reports/` for findings from swarms active on other branches.
+
+## Hive-Mind Template (Multi-Swarm)
+
+```markdown
+# Hive Mind: [Task Name]
+**Origin Branch**: `[current-branch]`
+
+## Task Overview
+[Description of objectives]
+
+## Global Coordination
+- **Current Swarm**: Operating on branch `[current-branch]`.
+- **Neighbor Context**: Agents should scan `../` for reports from other branches to avoid redundant research.
+
+## Agents & Status
+| Agent | Role | Status |
+|-------|------|--------|
+| [Name]| [Role]| [Pending/Running/Complete] |
+
+## Questions & Discoveries
+(Agents: Post questions for other agents here. Check this frequently.)
+
+## Reports Generated
+- [Agent Report Name](./agent-report.md)
+
+```
+
+## Agent Instructions Template
+
+```
+You are the [Role] Agent working on [task] in the [branch-name] worktree.
+
+Your Workspace:
+- Shared Hive-Mind: scratchpad/reports/YYYY-MM-DD-[branch]-[task]/hive-mind-[task].md
+- Your Report: scratchpad/reports/YYYY-MM-DD-[branch]-[task]/[agent-name]-report.md
+
+Mission:
+1. Read the Hive-Mind for context and check neighboring task folders for relevant global data.
+2. Perform [Specific Goal].
+3. Update the Hive-Mind "Questions" section if you hit a blocker or find something relevant to other swarms.
+
+```
+
+## Phase 3: Synthesis & Shadow Sync
+
+1. **Final Synthesis**: When agents complete, compile the `final-synthesis-report.md`.
+2. **Shadow Commit**: (Optional/Automated)
+* `cd .hive-anchor && git add . && git commit -m "Sync: [task] on [branch]" && git push origin hive-mind-data`
+
+
+
+```
+
+---
+
+### How to use this
+1.  **Save the file**: Put this in the folder where your AI agents look for "Skills" or "Tools."
+2.  **The First Run**: The very first time you use it, you'll need to create the `hive-mind-data` orphan branch manually (as we discussed) so the `.hive-anchor` has something to point to.
+3.  **The "Supervisor"**: Since you want this backed up, I recommend keeping a terminal open running a simple "git upload" loop in the `.hive-anchor` folder to act as the global sync.
+
+Would you like me to write a quick **Bash setup script** that creates the orphan branch and the first anchor worktree for you to get the ball rolling?
+
+```

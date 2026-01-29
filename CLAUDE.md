@@ -115,8 +115,21 @@ Key principles:
 - **Be aggressive with dead code** - no legacy preservation, no shims. If unused, delete it.
 - **Always wire up config values** - don't just define them, connect them to runtime behavior
 
+## Multi-Swarm Operations
+
+When running multiple swarms in parallel across worktrees, a shared scratchpad
+lives on an orphan `scratchpad` branch, mounted as a worktree. Run
+`git worktree list` to find it. Use `/multi-swarm` to orchestrate.
+
+Key principles:
+- The Queen (this Claude instance) coordinates all swarms and commits to the scratchpad branch
+- Each swarm has a leader that runs the standard `/swarm` protocol in its worktree
+- The shared scratchpad is the single source of truth for all reports and coordination
+- Each worktree can have a local `.scratchpad/` (gitignored) for throwaway temp files
+
 # Skills
 
 - `/plan [topic]` - Create a detailed implementation plan and save to scratchpad/plans
 - `/swarm [task]` - Start a multi-agent task with hive-mind coordination
+- `/multi-swarm [task]` - Orchestrate multiple parallel swarms across git worktrees
 - `/report [topic]` - Write a session report to scratchpad/reports
