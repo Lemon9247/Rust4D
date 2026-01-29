@@ -51,7 +51,7 @@ Rust4D/
 │   └── user.toml               # (gitignored)
 ├── docs/                       # Documentation
 ├── tests/                      # Integration tests
-├── scratchpad/                 # Working notes and session logs
+├── scratchpad/                 # Shared scratchpad (orphan branch worktree, gitignored)
 │   ├── reports/                # Development session reports
 │   ├── plans/                  # Architecture and planning docs
 │   └── ideas/                  # Feature proposals
