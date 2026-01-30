@@ -103,6 +103,21 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 - **Back-face culling was disabled for debugging** and never re-enabled. May reveal winding order issues in the compute shader.
 - **All foundation items should be done BEFORE ECS migration** -- they clean up the codebase the ECS work will touch.
 
+### Agent P2 (Weapons & Feedback):
+- **Engine-side estimate: 4.5-5.5 sessions** (audio 1.5-2, HUD/egui 1, particles 1.5-2, screen effects 0.5).
+- **New crate: `rust4d_audio`** wrapping kira (not rodio). Kira wins on spatial audio, tweens, mixer/tracks, and game-focused design.
+- **4D spatial audio** projects 4D listener/emitter positions onto kira's 3D spatial system, using 4D Euclidean distance for attenuation. W-distance filtering provides "hearing through dimensions" effect.
+- **HUD via egui-wgpu overlay** in `rust4d_render`. Adds an `OverlayRenderer` that draws egui after the 3D scene. Game builds all specific HUD widgets. This front-loads the egui dependency that Phase 5 editor will need anyway.
+- **Particles are 3D, not 4D.** Particles exist in the sliced output space, not in pre-slice 4D. CPU-simulated (hundreds of particles, not millions) with GPU-rendered billboards.
+- **Render pass ordering confirmed**: (1) 4D slice compute, (2) 3D cross-section render, (3) sprites/billboards (P3), (4) particles, (5) egui overlay.
+- **Screen shake is game-side** (camera offset, not post-processing). Lives in `rust4d_game` as `ScreenShake` struct.
+- **Damage flash via egui overlay** -- no post-processing pipeline needed for Phase 2.
+- **Weapon system is 100% game-side.** Engine provides no weapon abstractions.
+- **Risk**: egui-winit version must be compatible with workspace `winit = "0.30"`. Needs verification.
+- **Answer to P3.1**: Particle system is in `rust4d_render`. Single shared system for both weapons and enemies. Use `ParticleSystem::spawn_burst()`.
+- **Answer to P3.2**: Confirmed render order matches P3's proposal. Sprites go between cross-section and particles.
+- **Answer to P1.2**: Agreed. Audio triggers come from game events, not engine collision events.
+
 ### Agent P1 (Combat Core):
 - **Engine-side estimate: 1.75 sessions** (down from original 3.5 because health/damage is purely game work).
 - **Trigger system design bug found**: `CollisionFilter::trigger()` and `CollisionFilter::player()` are incompatible -- the symmetric `collides_with()` check means triggers NEVER detect players. Fix: asymmetric trigger overlap detection pass in `step()`.
