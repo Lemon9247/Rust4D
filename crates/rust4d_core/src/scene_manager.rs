@@ -24,6 +24,8 @@
 use std::collections::HashMap;
 use crate::{Scene, World};
 use crate::scene::{SceneError, ActiveScene};
+use crate::scene_transition::{SceneTransition, TransitionEffect};
+use crate::scene_loader::SceneLoader;
 use rust4d_physics::PhysicsConfig;
 
 /// Manages multiple scenes with a stack for overlays
@@ -44,6 +46,12 @@ pub struct SceneManager {
     default_physics: Option<PhysicsConfig>,
     /// Player collision radius for scene instantiation
     player_radius: f32,
+    /// Active transition between scenes
+    transition: Option<SceneTransition>,
+    /// Overlay scene names (rendered on top of active scene)
+    overlay_stack: Vec<String>,
+    /// Background scene loader
+    loader: SceneLoader,
 }
 
 impl Default for SceneManager {
@@ -61,6 +69,9 @@ impl SceneManager {
             active_stack: Vec::new(),
             default_physics: None,
             player_radius: 0.5,
+            transition: None,
+            overlay_stack: Vec::new(),
+            loader: SceneLoader::new(),
         }
     }
 
@@ -216,6 +227,128 @@ impl SceneManager {
         if let Some(scene) = self.active_scene_mut() {
             scene.update(dt);
         }
+    }
+
+    // --- Transitions ---
+
+    /// Switch to a scene with a transition effect
+    ///
+    /// Begins a transition from the current active scene to the named scene.
+    /// The target scene must already be instantiated or registered.
+    /// During the transition, both scenes may need to be rendered (e.g. crossfade).
+    pub fn switch_to_with_transition(
+        &mut self,
+        name: &str,
+        effect: TransitionEffect,
+    ) -> Result<(), SceneError> {
+        if !self.scenes.contains_key(name) {
+            return Err(SceneError::NotLoaded(name.to_string()));
+        }
+
+        let from = self.active_scene_name()
+            .unwrap_or("")
+            .to_string();
+
+        self.transition = Some(SceneTransition::new(
+            from,
+            name.to_string(),
+            effect,
+        ));
+
+        Ok(())
+    }
+
+    /// Update active transition, returns true if transition completed this frame
+    ///
+    /// When the transition completes, the scene is automatically switched
+    /// to the target scene.
+    pub fn update_transition(&mut self) -> bool {
+        if let Some(ref mut transition) = self.transition {
+            if transition.update() {
+                // Transition complete - switch to the target scene
+                let to_scene = transition.to_scene().to_string();
+                self.transition = None;
+                // Perform the actual switch (we already verified scene exists)
+                let _ = self.switch_to(&to_scene);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get current transition (for rendering)
+    pub fn current_transition(&self) -> Option<&SceneTransition> {
+        self.transition.as_ref()
+    }
+
+    /// Check if a transition is in progress
+    pub fn is_transitioning(&self) -> bool {
+        self.transition.is_some()
+    }
+
+    // --- Overlays ---
+
+    /// Push an overlay scene (renders on top of active scene)
+    ///
+    /// Overlay scenes are independent from the main scene stack and are
+    /// rendered on top of the active scene. The scene must already be
+    /// instantiated or registered.
+    pub fn push_overlay(&mut self, name: &str) -> Result<(), SceneError> {
+        if !self.scenes.contains_key(name) {
+            return Err(SceneError::NotLoaded(name.to_string()));
+        }
+        self.overlay_stack.push(name.to_string());
+        Ok(())
+    }
+
+    /// Pop the top overlay
+    ///
+    /// Returns the name of the popped overlay, or None if the overlay stack is empty.
+    pub fn pop_overlay(&mut self) -> Option<String> {
+        self.overlay_stack.pop()
+    }
+
+    /// Get the overlay stack
+    pub fn overlays(&self) -> &[String] {
+        &self.overlay_stack
+    }
+
+    /// Check if a scene is an overlay
+    pub fn is_overlay(&self, name: &str) -> bool {
+        self.overlay_stack.iter().any(|n| n == name)
+    }
+
+    // --- Async Loading ---
+
+    /// Start loading a scene in the background
+    ///
+    /// The scene file will be loaded asynchronously by a worker thread.
+    /// Use [`poll_loading`](SceneManager::poll_loading) to check for completed loads.
+    pub fn load_scene_async(&self, path: &str, scene_name: &str) {
+        self.loader.load_async(path, scene_name);
+    }
+
+    /// Poll for completed async scene loads, returns names of newly loaded scenes
+    ///
+    /// Checks the background loader for completed scene loads. Successfully loaded
+    /// scenes are automatically registered as templates. Returns the names of
+    /// all scenes that were loaded this call.
+    pub fn poll_loading(&mut self) -> Vec<String> {
+        let results = self.loader.poll_all();
+        let mut loaded_names = Vec::new();
+        for result in results {
+            match result.result {
+                Ok(scene) => {
+                    let name = result.scene_name.clone();
+                    self.templates.insert(name.clone(), scene);
+                    loaded_names.push(name);
+                }
+                Err(e) => {
+                    log::warn!("Failed to load scene '{}': {}", result.scene_name, e);
+                }
+            }
+        }
+        loaded_names
     }
 }
 
@@ -468,5 +601,186 @@ mod tests {
     fn test_default() {
         let manager = SceneManager::default();
         assert!(manager.active_scene().is_none());
+    }
+
+    // --- Transition tests ---
+
+    #[test]
+    fn test_switch_with_transition() {
+        let mut manager = SceneManager::new();
+        let scene1 = ActiveScene::new("Scene 1");
+        let scene2 = ActiveScene::new("Scene 2");
+        manager.register_active_scene("scene1", scene1);
+        manager.register_active_scene("scene2", scene2);
+        manager.push_scene("scene1").unwrap();
+
+        // Start a transition
+        let result = manager.switch_to_with_transition(
+            "scene2",
+            TransitionEffect::Fade {
+                duration: std::time::Duration::from_secs(1),
+            },
+        );
+        assert!(result.is_ok());
+        assert!(manager.is_transitioning());
+        assert!(manager.current_transition().is_some());
+
+        // Should still be on scene1 during transition
+        assert_eq!(manager.active_scene_name(), Some("scene1"));
+    }
+
+    #[test]
+    fn test_switch_with_transition_not_loaded() {
+        let mut manager = SceneManager::new();
+
+        let result = manager.switch_to_with_transition(
+            "nonexistent",
+            TransitionEffect::Instant,
+        );
+        assert!(result.is_err());
+        match result {
+            Err(SceneError::NotLoaded(name)) => assert_eq!(name, "nonexistent"),
+            _ => panic!("Expected NotLoaded error"),
+        }
+    }
+
+    #[test]
+    fn test_update_transition_completes_instant() {
+        let mut manager = SceneManager::new();
+        let scene1 = ActiveScene::new("Scene 1");
+        let scene2 = ActiveScene::new("Scene 2");
+        manager.register_active_scene("scene1", scene1);
+        manager.register_active_scene("scene2", scene2);
+        manager.push_scene("scene1").unwrap();
+
+        // Instant transition should complete in one update
+        manager.switch_to_with_transition("scene2", TransitionEffect::Instant).unwrap();
+        let completed = manager.update_transition();
+        assert!(completed);
+        assert!(!manager.is_transitioning());
+
+        // Should now be on scene2
+        assert_eq!(manager.active_scene_name(), Some("scene2"));
+    }
+
+    #[test]
+    fn test_is_transitioning() {
+        let mut manager = SceneManager::new();
+        let scene = ActiveScene::new("Test");
+        manager.register_active_scene("test", scene);
+
+        // No transition initially
+        assert!(!manager.is_transitioning());
+
+        // Start transition
+        manager.switch_to_with_transition(
+            "test",
+            TransitionEffect::Fade {
+                duration: std::time::Duration::from_secs(10),
+            },
+        ).unwrap();
+        assert!(manager.is_transitioning());
+    }
+
+    #[test]
+    fn test_update_transition_no_transition() {
+        let mut manager = SceneManager::new();
+        // Updating with no transition should return false
+        let completed = manager.update_transition();
+        assert!(!completed);
+    }
+
+    // --- Overlay tests ---
+
+    #[test]
+    fn test_push_overlay() {
+        let mut manager = SceneManager::new();
+        let scene = ActiveScene::new("Game");
+        let hud = ActiveScene::new("HUD");
+        manager.register_active_scene("game", scene);
+        manager.register_active_scene("hud", hud);
+        manager.push_scene("game").unwrap();
+
+        // Push an overlay
+        let result = manager.push_overlay("hud");
+        assert!(result.is_ok());
+        assert_eq!(manager.overlays().len(), 1);
+        assert_eq!(manager.overlays()[0], "hud");
+    }
+
+    #[test]
+    fn test_pop_overlay() {
+        let mut manager = SceneManager::new();
+        let scene = ActiveScene::new("Game");
+        let hud = ActiveScene::new("HUD");
+        manager.register_active_scene("game", scene);
+        manager.register_active_scene("hud", hud);
+        manager.push_scene("game").unwrap();
+
+        manager.push_overlay("hud").unwrap();
+        let popped = manager.pop_overlay();
+        assert_eq!(popped, Some("hud".to_string()));
+        assert!(manager.overlays().is_empty());
+    }
+
+    #[test]
+    fn test_pop_overlay_empty() {
+        let mut manager = SceneManager::new();
+        let popped = manager.pop_overlay();
+        assert!(popped.is_none());
+    }
+
+    #[test]
+    fn test_overlay_not_loaded_error() {
+        let mut manager = SceneManager::new();
+        let result = manager.push_overlay("nonexistent");
+        assert!(result.is_err());
+        match result {
+            Err(SceneError::NotLoaded(name)) => assert_eq!(name, "nonexistent"),
+            _ => panic!("Expected NotLoaded error"),
+        }
+    }
+
+    #[test]
+    fn test_overlays_accessor() {
+        let mut manager = SceneManager::new();
+        let hud = ActiveScene::new("HUD");
+        let minimap = ActiveScene::new("Minimap");
+        manager.register_active_scene("hud", hud);
+        manager.register_active_scene("minimap", minimap);
+
+        assert!(manager.overlays().is_empty());
+
+        manager.push_overlay("hud").unwrap();
+        manager.push_overlay("minimap").unwrap();
+
+        let overlays = manager.overlays();
+        assert_eq!(overlays.len(), 2);
+        assert_eq!(overlays[0], "hud");
+        assert_eq!(overlays[1], "minimap");
+    }
+
+    #[test]
+    fn test_is_overlay() {
+        let mut manager = SceneManager::new();
+        let hud = ActiveScene::new("HUD");
+        let game = ActiveScene::new("Game");
+        manager.register_active_scene("hud", hud);
+        manager.register_active_scene("game", game);
+
+        manager.push_overlay("hud").unwrap();
+
+        assert!(manager.is_overlay("hud"));
+        assert!(!manager.is_overlay("game"));
+        assert!(!manager.is_overlay("nonexistent"));
+    }
+
+    // --- Async loading tests ---
+
+    #[test]
+    fn test_poll_loading_empty() {
+        let mut manager = SceneManager::new();
+        let loaded = manager.poll_loading();
+        assert!(loaded.is_empty());
     }
 }
