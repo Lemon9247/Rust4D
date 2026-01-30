@@ -138,3 +138,17 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 - **4D explosions cover MORE volume.** Hypersphere volume scales as R^4 -- deliberate gameplay advantage for explosive weapons countering W-phasing enemies.
 - **All three Wave 2 items (sprites, particles, physics queries) can run in parallel.** Critical path is 1.5 sessions.
 - **Depth buffer sharing is the key integration point.** `RenderPipeline::ensure_depth_texture()` needs to expose the depth buffer for sprites and particles.
+
+### Agent P5 (Editor & Polish):
+- **Revised estimate: 10-12.5 sessions total** (8-10 critical path). Texture support is harder than the synthesis's 1-session estimate.
+- **Texture support in 4D is the hardest sub-task.** The compute shader has no UV path. Recommended: triplanar mapping first (no compute shader changes), defer UV-through-pipeline to later.
+- **Editor is a new `rust4d_editor` crate.** Overlay via `EditorHost` trait. Games opt in; editor never takes over the event loop. Toggle with F12.
+- **Point lights need W-distance attenuation.** Lights "bleed through" nearby W-slices, dimming with W-distance. Beyond `w_range`, invisible.
+- **Shadows work on already-sliced 3D geometry.** No 4D shadow math needed. Standard directional shadow mapping.
+- **Input rebinding is 80% planned** by the split plan's action/axis abstraction. Engine adds `InputMap::rebind()` + TOML persistence.
+- **Editor has the deepest dependency chain** of any feature -- needs ECS, serialization, all shape types, working renderer.
+- **W-slice navigation thumbnails** are the killer editor feature for 4D level design. Render scene at multiple W values as small previews.
+- **Phase 5 sub-features are internally parallel:** lights, textures, and input rebinding are independent. Editor framework starts after or alongside.
+- **Answer to F.2**: Yes, deferring physics type serialization to split plan Phase 2 is compatible.
+- **For P3/P2**: Render pass ordering with editor: (1) 4D slice geometry, (2) sprites/billboards, (3) particles, (4) HUD overlay, (5) egui editor overlay (last).
+- **For P2**: Point lights add bind group 1 to the main render pipeline. HUD/sprite passes use separate pipelines, no conflict.
