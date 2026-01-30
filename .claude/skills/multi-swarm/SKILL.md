@@ -6,26 +6,29 @@ argument-hint: [task description]
 
 # Multi-Swarm: Queen Protocol
 
-You are the **Queen** -- the coordinating instance that manages multiple parallel swarms. Each swarm has a **leader** that runs the standard `/swarm` protocol in its own git worktree. You handle infrastructure, cross-swarm coordination, and final synthesis.
+You are the **Queen** -- the coordinating instance that manages multiple parallel swarms across git worktrees. You spawn all agents directly, handle cross-swarm coordination, and write the final synthesis.
 
 Coordinate swarms to work on: **$ARGUMENTS**
 
-## Hierarchy
+## Architecture Constraint
+
+**Sub-agents cannot spawn their own sub-agents.** The Task tool has a nesting depth of 1. This means:
+
+- The Queen spawns ALL agents directly (flat fan-out)
+- There are no "leader" agents -- the Queen IS the leader for every swarm
+- Agents do their work and write reports; the Queen reads reports and synthesizes
 
 ```
 Queen (you)
-├── Swarm A Leader (background agent in worktree A)
-│   ├── Agent 1 (spawned by leader)
-│   └── Agent 2
-├── Swarm B Leader (background agent in worktree B)
-│   ├── Agent 3
-│   └── Agent 4
-└── Shared scratchpad (orphan branch worktree, you commit here)
+├── Swarm A agents (all spawned directly by Queen)
+│   ├── Agent A1 (background task)
+│   ├── Agent A2 (background task)
+│   └── Agent A3 (background task)
+├── Swarm B agents (all spawned directly by Queen)
+│   ├── Agent B1 (background task)
+│   └── Agent B2 (background task)
+└── Shared scratchpad (orphan branch worktree, Queen commits here)
 ```
-
-- **You (Queen)**: Infrastructure, task decomposition, cross-swarm coordination, synthesis
-- **Leaders**: Run `/swarm` in their worktree, manage their own agents, check coordination file
-- **Agents**: Do the work. They don't know other swarms exist.
 
 ---
 
@@ -69,25 +72,26 @@ The resulting path is `$SCRATCHPAD`. Verify it contains `reports/`, `plans/`, `i
 
 ## Phase 1: Task Decomposition
 
-1. Analyze the task and identify **independent streams** of work.
-2. Each stream becomes a swarm with:
-   - A **name** (short, kebab-case)
-   - A **branch name** (e.g., `feature/physics-friction`)
-   - A **task description** for the swarm leader
-   - Any **dependencies** on other streams (ideally none)
-3. Present the decomposition to the user for approval before proceeding.
+1. Analyze the task and identify **independent streams** of work (swarms).
+2. For each swarm, identify the **individual agents** needed.
+3. Each agent gets:
+   - A **name** (e.g., "Agent A1: Core Analysis")
+   - A **specific task** with clear scope
+   - A **report path** to write findings to
+   - The **worktree path** to read code from
+4. Present the full decomposition (swarms + agents) to the user for approval before proceeding.
 
 ---
 
-## Phase 2: Coordination File
+## Phase 2: Coordination File & Hive-Mind Files
 
-Create the multi-swarm task folder and coordination file:
+Create the multi-swarm task folder:
 
 ```bash
-mkdir -p $SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/
+mkdir -p $SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/{swarm-a,swarm-b}/
 ```
 
-Write `$SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/coordination.md`:
+Write the coordination file at `$SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/coordination.md`:
 
 ```markdown
 # Queen's Coordination: [Task Name]
@@ -97,108 +101,94 @@ Write `$SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/coordination.md`:
 [What the overall task is trying to accomplish]
 
 ## Swarms
-| Swarm | Branch | Worktree Path | Leader Status |
-|-------|--------|---------------|---------------|
-| [name] | `feature/...` | `../Repo-name/` | Pending |
+| Swarm | Branch | Worktree Path | Status |
+|-------|--------|---------------|--------|
+| [name] | `feature/...` | `/path/to/worktree` | Pending |
+
+## Agents
+| Agent | Swarm | Focus | Status |
+|-------|-------|-------|--------|
+| A1 | swarm-a | [focus] | Pending |
+| A2 | swarm-a | [focus] | Pending |
+| B1 | swarm-b | [focus] | Pending |
 
 ## Cross-Swarm Notes
-(Queen posts findings from one swarm that are relevant to another.
-Leaders should check this section periodically.)
+(Queen posts findings relevant across swarms as agents complete.)
 
 ## Completion Checklist
-- [ ] All swarm leaders complete
-- [ ] Cross-swarm synthesis written
+- [ ] All agents complete
+- [ ] Per-swarm synthesis written (by Queen)
+- [ ] Cross-swarm synthesis written (by Queen)
 - [ ] Scratchpad committed
 ```
+
+Write a hive-mind file for each swarm at `$SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/<swarm>/hive-mind.md`. This gives agents within a swarm shared context.
 
 ---
 
 ## Phase 3: Worktree Setup
 
-For each swarm:
+For each swarm that needs its own worktree:
 
-1. **Create the feature branch**:
+1. **Create the worktree**:
    ```bash
-   git branch feature/<name> main
+   git worktree add ../$(basename $(pwd))-<swarm-name> <branch-name>
    ```
 
-2. **Add the worktree**:
-   ```bash
-   git worktree add ../$(basename $(pwd))-<name> feature/<name>
-   ```
+2. If using an existing branch/worktree, verify it's in the expected state.
 
-3. **Create the swarm's folder** in the shared scratchpad:
-   ```bash
-   mkdir -p $SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/<swarm-name>/
-   ```
-
-If a worktree or branch already exists, verify it's in the expected state rather than recreating it.
+If a swarm operates on the main worktree, no setup is needed.
 
 ---
 
-## Phase 4: Launch Swarm Leaders
+## Phase 4: Launch All Agents
 
-### Automated Launch (Task Tool)
+**Spawn all agents in a single message** using multiple parallel Task tool calls with `run_in_background: true`. This is the key step -- launch everything at once.
 
-Spawn each leader as a **background Task agent**. Provide these instructions:
+Each agent prompt should include:
+- Their specific task and scope
+- The absolute worktree path to read code from
+- The report file path to write to
+- The hive-mind file path for shared context
+- Clear instruction that this is read-only (for research tasks) or what files they own (for implementation tasks)
+
+Example agent prompt:
 
 ```
-You are a Swarm Leader working in worktree: [absolute path to worktree]
+You are Agent A1 analysing [specific area] of the [project] codebase.
 
-IMPORTANT: All code operations use your worktree path. All reports use the
-shared scratchpad path. Use absolute paths for everything.
-
-Your task: [swarm's specific task description]
+This is a RESEARCH task -- do NOT modify any code files. Only read, search, and write your report.
 
 ## Your Workspace
-- Code worktree: [absolute worktree path]
-- Shared scratchpad: [$SCRATCHPAD]
-- Your report folder: [$SCRATCHPAD]/reports/[task-folder]/[swarm-name]/
-- Coordination file: [$SCRATCHPAD]/reports/[task-folder]/coordination.md
+- Code to analyse: [absolute worktree path]
+- Write your report to: [absolute report path]
+- Hive-mind file (shared context): [absolute hive-mind path]
 
-## Instructions
+## Your Task
+[Detailed description of what to analyse]
 
-Run the /swarm protocol for your task:
-1. Create your hive-mind file at [report folder]/hive-mind.md
-2. Identify and spawn agents for your task
-3. Point agents at your hive-mind file and report folder
-4. Monitor agents, write synthesis report when complete
+Read every file in [specific directories]. Report on:
+1. [Specific aspect]
+2. [Specific aspect]
+3. [Specific aspect]
 
-## Cross-Swarm Awareness
-- Check the coordination file for notes from the Queen
-- If you discover something relevant to other swarms, add it to the
-  "Cross-Swarm Notes" section of the coordination file
-- When complete, update your status to "Complete" in the coordination file
+Reference file paths and line numbers in your findings.
 ```
 
-Update the coordination file as leaders are launched (set status to Running).
+Update the coordination file agent statuses to "Running".
 
-Use **TaskCreate/TaskUpdate** to track each swarm leader in the UI.
-
-### Manual Launch (Separate Sessions)
-
-For larger tasks where automated agents may not have enough context, instruct the user to open separate Claude Code sessions:
-
-```
-cd ../Repo-<name> && claude
-```
-
-Provide the user with:
-- Each session's task description
-- The shared scratchpad path
-- The coordination file path
-- The swarm's report folder path
-
-Each session runs `/swarm [task]` and writes to the shared scratchpad.
+Use **TaskCreate/TaskUpdate** to track each agent in the UI.
 
 ---
 
 ## Phase 5: Monitor & Synthesize
 
-1. **Monitor**: Check the coordination file and swarm report folders for completed synthesis reports.
-2. **Cross-pollinate**: If one swarm's findings are relevant to another, post notes in the coordination file's "Cross-Swarm Notes" section.
-3. **Wait**: Don't start synthesis until all leaders report complete.
-4. **Synthesize**: Write `$SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/cross-swarm-synthesis.md`:
+1. **Wait** for all agents to complete (use TaskOutput with blocking).
+2. **Read all agent reports** from the scratchpad.
+3. **Write per-swarm synthesis** for each swarm at `$SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/<swarm>/synthesis.md`:
+   - Combine findings from that swarm's agents
+   - Identify the top issues within that swarm's scope
+4. **Write cross-swarm synthesis** at `$SCRATCHPAD/reports/YYYY-MM-DD-multi-<task>/cross-swarm-synthesis.md`:
 
 ```markdown
 # Cross-Swarm Synthesis: [Task Name]
@@ -216,17 +206,15 @@ Each session runs `/swarm [task]` and writes to the shared scratchpad.
 [Key outcomes]
 
 ## Integration Notes
-[Anything needed to merge the branches -- conflicts, shared types,
-ordering of merges, etc.]
+[Cross-cutting concerns, shared issues, conflicts between swarms]
 
 ## Next Steps
-- [ ] Merge branch `feature/...` into main
-- [ ] Merge branch `feature/...` into main
-- [ ] [Any follow-up work]
+- [ ] Action item 1
+- [ ] Action item 2
 
 ## Sources
-- [Swarm 1 Synthesis](./swarm-1/final-synthesis-report.md)
-- [Swarm 2 Synthesis](./swarm-2/final-synthesis-report.md)
+- [Swarm 1 Synthesis](./swarm-1/synthesis.md)
+- [Swarm 2 Synthesis](./swarm-2/synthesis.md)
 ```
 
 ---
