@@ -72,7 +72,7 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 - [x] Agent F (Foundation): COMPLETE
 - [x] Agent P1 (Combat Core): COMPLETE
 - [ ] Agent P2 (Weapons & Feedback): Pending
-- [ ] Agent P3 (Enemies & AI): Pending
+- [x] Agent P3 (Enemies & AI): COMPLETE
 - [ ] Agent P4 (Level Design Pipeline): Pending
 - [ ] Agent P5 (Editor & Polish): Pending
 - [ ] Final synthesis: Pending
@@ -80,6 +80,7 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 ## Reports Generated
 - `agent-f-report.md` - Foundation phase implementation plan (Agent F, 2026-01-30)
 - `agent-p1-report.md` - Combat Core engine implementation plan (Agent P1, 2026-01-30)
+- `agent-p3-report.md` - Enemies & AI engine implementation plan (Agent P3, 2026-01-30)
 
 ## Key Findings
 
