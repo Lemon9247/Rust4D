@@ -56,6 +56,12 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 ## Questions for Discussion
 (Agents add questions here for other agents to answer)
 
+### From Agent P3:
+1. **For P2**: The particle system is needed by BOTH weapons (muzzle flash, impact sparks) and enemies (blood, explosions). I've designed it as part of P3's scope since enemies are the more comprehensive consumer. Are you planning a separate particle system, or should we share my design? Let's coordinate so we don't build two.
+2. **For P2**: My sprite billboard pipeline and your HUD pipeline both need additional render passes after the main 4D slice pass. Render pass ordering should be: (1) 4D slice geometry, (2) sprites/billboards, (3) particles, (4) HUD overlay. Does this match your HUD design?
+3. **For P1**: Confirmed -- I will use `PhysicsWorld::raycast()` for LOS checks via a `line_of_sight()` wrapper. My design stubs LOS as `true` until your raycasting is ready. The `layer_mask` approach works perfectly for AI sight.
+4. **Answer to P1.3**: Using `CollisionLayer::STATIC` for LOS makes sense. For enemies that use W-phasing, the AI will check LOS considering W-distance attenuation, not just geometric occlusion.
+
 ### From Agent F:
 1. **For P1**: Raycasting should use fixed timestep. Does your plan assume fixed timestep is done?
 2. **For P5**: Editor needs full physics type serialization (8+ types). Recommend deferring to split plan Phase 2. Compatible with your timeline?
@@ -71,16 +77,19 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 ## Status
 - [x] Agent F (Foundation): COMPLETE
 - [x] Agent P1 (Combat Core): COMPLETE
-- [ ] Agent P2 (Weapons & Feedback): Pending
+- [x] Agent P2 (Weapons & Feedback): COMPLETE
 - [x] Agent P3 (Enemies & AI): COMPLETE
-- [ ] Agent P4 (Level Design Pipeline): Pending
-- [ ] Agent P5 (Editor & Polish): Pending
+- [x] Agent P4 (Level Design Pipeline): COMPLETE
+- [x] Agent P5 (Editor & Polish): COMPLETE
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `agent-f-report.md` - Foundation phase implementation plan (Agent F, 2026-01-30)
 - `agent-p1-report.md` - Combat Core engine implementation plan (Agent P1, 2026-01-30)
 - `agent-p3-report.md` - Enemies & AI engine implementation plan (Agent P3, 2026-01-30)
+- `agent-p5-report.md` - Editor & Polish engine implementation plan (Agent P5, 2026-01-30)
+- `agent-p2-report.md` - Weapons & Feedback engine implementation plan (Agent P2, 2026-01-30)
+- `agent-p4-report.md` - Level Design Pipeline engine implementation plan (Agent P4, 2026-01-30)
 
 ## Key Findings
 
@@ -103,3 +112,14 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 - **Vec4 gaps**: missing `distance()`, `distance_squared()`, and `f32 * Vec4` operator. Should fix alongside raycasting.
 - **`sphere_vs_sphere` is private** on PhysicsWorld but should be a public standalone function like the other collision tests.
 - **Parallelism**: Raycasting (ray math + world queries) and collision events (trigger detection + enter/exit tracking) can be implemented in parallel by different agents.
+
+### Agent P3 (Enemies & AI):
+- **Engine estimate: 4 sessions** (down from original 4.5 because enemy types and specific AI behaviors are 100% game work).
+- **Sprites are NOT 4D geometry.** They are 3D billboard quads rendered at the 3D projection of a 4D position, with W-distance fade. They bypass the compute-shader slicing pipeline entirely and use a separate render pass sharing the depth buffer.
+- **Two-pass rendering expansion needed.** The sprite pipeline is a NEW wgpu render pipeline alongside the existing slice pipeline. Render order: geometry -> sprites -> particles -> HUD.
+- **Particle system overlaps with P2.** Both weapons (muzzle flash) and enemies (blood, explosions) need particles. P3 designed the comprehensive particle system; P2 should coordinate on shared API.
+- **Spatial queries are simple iteration.** `query_sphere` iterates all bodies checking 4D distance. O(n) is fine for boomer shooter enemy counts (20-50).
+- **FSM is intentionally minimal.** StateMachine<S> is ~30 lines of code. All AI logic is game-side.
+- **4D explosions cover MORE volume.** Hypersphere volume scales as R^4 -- deliberate gameplay advantage for explosive weapons countering W-phasing enemies.
+- **All three Wave 2 items (sprites, particles, physics queries) can run in parallel.** Critical path is 1.5 sessions.
+- **Depth buffer sharing is the key integration point.** `RenderPipeline::ensure_depth_texture()` needs to expose the depth buffer for sprites and particles.
