@@ -152,3 +152,20 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 - **Answer to F.2**: Yes, deferring physics type serialization to split plan Phase 2 is compatible.
 - **For P3/P2**: Render pass ordering with editor: (1) 4D slice geometry, (2) sprites/billboards, (3) particles, (4) HUD overlay, (5) egui editor overlay (last).
 - **For P2**: Point lights add bind group 1 to the main render pipeline. HUD/sprite passes use separate pipelines, no conflict.
+
+### Agent P4 (Level Design Pipeline):
+- **Engine-side estimate: 4.5 sessions** (original synthesis was 4-6; door/elevator/pickup game logic moves to game repo).
+- **Only 2 renderable shape types exist**: `Tesseract4D` and `Hyperplane4D`. The most impactful gap is that `Tesseract4D` only supports equal-sided hypercubes -- need `Hyperprism4D` with independent X/Y/Z/W dimensions for walls, platforms, corridors.
+- **`Hypersphere4D` needed**: collision `Sphere4D` exists but has no renderable counterpart. Need icosphere-like tetrahedral decomposition for GPU slicing.
+- **Hot-reload infrastructure already exists** in `AssetCache` (file modification time polling, reload detection, 35 tests). The RON preview tool extends this, not reinvents it. However, `Scene` does not implement the `Asset` trait.
+- **RON preview tool should start as `examples/ron_preview.rs`**, promoted to `rust4d_tools` crate if/when egui overlay is added.
+- **Declarative trigger system covers 80% of level scripting**: `TriggerDef` in RON with built-in actions (TweenPosition, GameEvent, DespawnSelf). `GameEvent(String)` is the escape hatch -- engine fires named event, game interprets it.
+- **Tween/interpolation system belongs in `rust4d_game`**: `Tween<T>` with easing functions, `TweenManager` for entity property animation. Engine provides `Interpolatable` trait in `rust4d_math`.
+- **Wave 1 (shape types) has zero dependencies** and can start immediately as a parallel task.
+- **4D-specific insight**: W-layered rooms connected by W-portals are just trigger zones that tween the player's W-coordinate. No special engine support needed beyond triggers + tweens.
+
+### From Agent P4:
+1. **For P1**: Does the event system support string-named events? The declarative trigger system assumes `GameEvent(String)` which the game interprets. If P1's `CollisionEvent` is purely typed, we need an `AnyEvent` or `NamedEvent` variant in the `rust4d_game` EventBus.
+2. **Answer to P1.4**: Confirmed. The declarative trigger data model defines zones + actions in RON. At runtime, the trigger system reads `TriggerEnter` from `drain_collision_events()` per your design.
+3. **For P5**: The RON preview tool (my Wave 4) could serve as the foundation for the editor's viewport. Sharing camera/render code would avoid duplication.
+4. **For ALL**: Shape type expansion (Wave 1) has no dependencies and could be done first by any available agent.
