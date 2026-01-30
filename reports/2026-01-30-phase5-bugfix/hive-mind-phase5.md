@@ -54,13 +54,14 @@ Also verify the movement rotation bug (W-axis using camera.ana()) is already fix
 ## Status
 - [x] Asset Agent: COMPLETE - created asset_error.rs (137 lines, 8 tests) and asset_cache.rs (816 lines, 26 tests)
 - [x] Hierarchy Agent: COMPLETE - modified world.rs (+280 lines, 11 methods, 20 tests, HierarchyError enum). No changes to entity.rs.
-- [ ] Scene Features Agent: Pending
+- [x] Scene Features Agent: COMPLETE - created scene_transition.rs (~220 lines, 13 tests), scene_loader.rs (~150 lines, 6 tests), scene_validator.rs (~200 lines, 11 tests), modified scene_manager.rs (+130 lines, 12 new tests)
 - [ ] Queen integration (lib.rs, Cargo.toml, cross-module wiring): Pending
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `asset-agent-report.md` - Phase 5A asset management implementation report
 - `hierarchy-agent-report.md` - Phase 5B entity hierarchy implementation report
+- `scene-features-agent-report.md` - Phase 5C advanced scene features implementation report
 
 ## Key Findings
 - **Hierarchy Agent**: Stored hierarchy on World (not Entity) to avoid circular module deps between entity.rs and world.rs. EntityKey is defined in world.rs, so entity.rs can't reference it without a circular dependency. Storing hierarchy maps (parents, children_map) on World is the cleaner ECS-style approach anyway.
@@ -84,3 +85,15 @@ No new Cargo.toml dependencies needed (uses only std + log).
 pub use world::{World, EntityKey, HierarchyError};
 ```
 No new modules, no new Cargo.toml dependencies. Only modified world.rs.
+
+### Scene Features Agent (Phase 5C):
+```rust
+mod scene_transition;
+mod scene_loader;
+mod scene_validator;
+
+pub use scene_transition::{SceneTransition, TransitionEffect, SlideDirection};
+pub use scene_loader::{SceneLoader, LoadResult};
+pub use scene_validator::{SceneValidator, ValidationError};
+```
+No new Cargo.toml dependencies needed (uses only std::sync::mpsc, std::thread, std::time, std::collections::HashSet).
