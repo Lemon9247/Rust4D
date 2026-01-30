@@ -53,16 +53,18 @@ Also verify the movement rotation bug (W-axis using camera.ana()) is already fix
 
 ## Status
 - [x] Asset Agent: COMPLETE - created asset_error.rs (137 lines, 8 tests) and asset_cache.rs (816 lines, 26 tests)
-- [ ] Hierarchy Agent: Pending
+- [x] Hierarchy Agent: COMPLETE - modified world.rs (+280 lines, 11 methods, 20 tests, HierarchyError enum). No changes to entity.rs.
 - [ ] Scene Features Agent: Pending
 - [ ] Queen integration (lib.rs, Cargo.toml, cross-module wiring): Pending
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `asset-agent-report.md` - Phase 5A asset management implementation report
+- `hierarchy-agent-report.md` - Phase 5B entity hierarchy implementation report
 
 ## Key Findings
-(Summarize major discoveries as they emerge)
+- **Hierarchy Agent**: Stored hierarchy on World (not Entity) to avoid circular module deps between entity.rs and world.rs. EntityKey is defined in world.rs, so entity.rs can't reference it without a circular dependency. Storing hierarchy maps (parents, children_map) on World is the cleaner ECS-style approach anyway.
+- **Hierarchy Agent**: Transform4D already has a `compose()` method that handles position+rotation+scale correctly, so `world_transform()` does full composition, not just position addition.
 
 ## Exports Needed in lib.rs
 
@@ -75,3 +77,10 @@ pub use asset_error::AssetError;
 pub use asset_cache::{AssetId, AssetHandle, Asset, AssetCache};
 ```
 No new Cargo.toml dependencies needed (uses only std + log).
+
+### Hierarchy Agent (Phase 5B):
+```rust
+// Update existing re-export line in lib.rs:
+pub use world::{World, EntityKey, HierarchyError};
+```
+No new modules, no new Cargo.toml dependencies. Only modified world.rs.
