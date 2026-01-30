@@ -18,13 +18,23 @@ mod world;
 mod shapes;
 mod scene;
 mod scene_manager;
+mod asset_error;
+mod asset_cache;
+mod scene_transition;
+mod scene_loader;
+mod scene_validator;
 
 pub use transform::Transform4D;
 pub use entity::{Material, Entity, ShapeRef, DirtyFlags, EntityTemplate};
-pub use world::{World, EntityKey};
+pub use world::{World, EntityKey, HierarchyError};
 pub use shapes::ShapeTemplate;
 pub use scene::{Scene, SceneLoadError, SceneSaveError, SceneError, ActiveScene};
 pub use scene_manager::SceneManager;
+pub use asset_error::AssetError;
+pub use asset_cache::{AssetId, AssetHandle, Asset, AssetCache};
+pub use scene_transition::{SceneTransition, TransitionEffect, SlideDirection};
+pub use scene_loader::{SceneLoader, LoadResult};
+pub use scene_validator::{SceneValidator, ValidationError};
 
 // Re-export commonly used types from rust4d_math for convenience
 pub use rust4d_math::{Vec4, Rotor4, RotationPlane, ConvexShape4D, Tetrahedron};

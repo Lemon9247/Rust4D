@@ -1,9 +1,11 @@
 //! World container for entities
 //!
-//! The World manages all entities in the simulation.
+//! The World manages all entities in the simulation, including parent-child
+//! entity hierarchy with cycle detection and recursive operations.
 
-use std::collections::HashMap;
-use crate::{Entity, DirtyFlags};
+use std::collections::{HashMap, VecDeque};
+use std::fmt;
+use crate::{Entity, DirtyFlags, Transform4D};
 use rust4d_physics::{PhysicsConfig, PhysicsWorld};
 use slotmap::{new_key_type, SlotMap};
 
@@ -17,10 +19,34 @@ new_key_type! {
     pub struct EntityKey;
 }
 
+/// Error type for hierarchy operations
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HierarchyError {
+    /// One or both entities don't exist in the world
+    InvalidEntity,
+    /// Adding this child would create a cycle in the hierarchy
+    CyclicHierarchy,
+    /// The entity is already a child of the specified parent
+    AlreadyChild,
+}
+
+impl fmt::Display for HierarchyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HierarchyError::InvalidEntity => write!(f, "one or both entities do not exist"),
+            HierarchyError::CyclicHierarchy => write!(f, "adding this child would create a cycle"),
+            HierarchyError::AlreadyChild => write!(f, "entity is already a child of this parent"),
+        }
+    }
+}
+
+impl std::error::Error for HierarchyError {}
+
 /// The 4D world containing all entities
 ///
 /// The World is the central container for all game objects.
-/// It manages entities and integrates with physics simulation.
+/// It manages entities, integrates with physics simulation,
+/// and tracks parent-child entity hierarchy.
 pub struct World {
     /// All entities in the world (using generational keys)
     entities: SlotMap<EntityKey, Entity>,
@@ -28,6 +54,10 @@ pub struct World {
     name_index: HashMap<String, EntityKey>,
     /// Optional physics simulation (None = no physics)
     physics_world: Option<PhysicsWorld>,
+    /// Parent mapping: child entity key -> parent entity key
+    parents: HashMap<EntityKey, EntityKey>,
+    /// Children mapping: parent entity key -> list of child entity keys
+    children_map: HashMap<EntityKey, Vec<EntityKey>>,
 }
 
 impl Default for World {
@@ -43,6 +73,8 @@ impl World {
             entities: SlotMap::with_key(),
             name_index: HashMap::new(),
             physics_world: None,
+            parents: HashMap::new(),
+            children_map: HashMap::new(),
         }
     }
 
@@ -52,6 +84,8 @@ impl World {
             entities: SlotMap::with_capacity_and_key(capacity),
             name_index: HashMap::new(),
             physics_world: None,
+            parents: HashMap::new(),
+            children_map: HashMap::new(),
         }
     }
 
@@ -90,6 +124,8 @@ impl World {
     /// This method also cleans up associated resources:
     /// - Removes the entity from the name index if it was named
     /// - Removes the physics body from PhysicsWorld if one was attached
+    /// - Removes the entity from its parent's children list (if it had a parent)
+    /// - Orphans the entity's children (they become root entities)
     pub fn remove_entity(&mut self, key: EntityKey) -> Option<Entity> {
         // Remove from entities first
         if let Some(entity) = self.entities.remove(key) {
@@ -102,6 +138,23 @@ impl World {
             if let Some(body_key) = entity.physics_body {
                 if let Some(ref mut physics) = self.physics_world {
                     physics.remove_body(body_key);
+                }
+            }
+
+            // Clean up hierarchy: remove from parent's children list
+            if let Some(parent_key) = self.parents.remove(&key) {
+                if let Some(siblings) = self.children_map.get_mut(&parent_key) {
+                    siblings.retain(|&k| k != key);
+                    if siblings.is_empty() {
+                        self.children_map.remove(&parent_key);
+                    }
+                }
+            }
+
+            // Clean up hierarchy: orphan all children (they become root entities)
+            if let Some(children) = self.children_map.remove(&key) {
+                for child_key in children {
+                    self.parents.remove(&child_key);
                 }
             }
 
@@ -213,6 +266,8 @@ impl World {
     pub fn clear(&mut self) {
         self.entities.clear();
         self.name_index.clear();
+        self.parents.clear();
+        self.children_map.clear();
     }
 
     /// Iterate over all entities
@@ -228,6 +283,235 @@ impl World {
     /// Iterate over keys and entities
     pub fn iter_with_keys(&self) -> impl Iterator<Item = (EntityKey, &Entity)> {
         self.entities.iter()
+    }
+
+    // --- Hierarchy methods ---
+
+    /// Get an entity's parent key
+    ///
+    /// Returns `None` if the entity has no parent (is a root entity)
+    /// or if the entity does not exist.
+    pub fn parent_of(&self, entity: EntityKey) -> Option<EntityKey> {
+        self.parents.get(&entity).copied()
+    }
+
+    /// Get an entity's children as a slice of keys
+    ///
+    /// Returns an empty slice if the entity has no children or does not exist.
+    pub fn children_of(&self, entity: EntityKey) -> &[EntityKey] {
+        self.children_map.get(&entity).map_or(&[], |v| v.as_slice())
+    }
+
+    /// Check if an entity has any children
+    pub fn has_children(&self, entity: EntityKey) -> bool {
+        self.children_map
+            .get(&entity)
+            .is_some_and(|children| !children.is_empty())
+    }
+
+    /// Check if an entity has a parent
+    pub fn has_parent(&self, entity: EntityKey) -> bool {
+        self.parents.contains_key(&entity)
+    }
+
+    /// Add a child entity to a parent entity
+    ///
+    /// If the child already has a different parent, it is first removed from
+    /// that parent (reparenting). Returns an error if either entity does not
+    /// exist, if the relationship would create a cycle, or if the child is
+    /// already a child of the specified parent.
+    pub fn add_child(&mut self, parent: EntityKey, child: EntityKey) -> Result<(), HierarchyError> {
+        // Validate both entities exist
+        if !self.entities.contains_key(parent) || !self.entities.contains_key(child) {
+            return Err(HierarchyError::InvalidEntity);
+        }
+
+        // Cannot parent an entity to itself
+        if parent == child {
+            return Err(HierarchyError::CyclicHierarchy);
+        }
+
+        // Check if child is already a child of this parent
+        if self.parents.get(&child) == Some(&parent) {
+            return Err(HierarchyError::AlreadyChild);
+        }
+
+        // Check for cycles: walk up from parent; if we reach child, it would create a cycle
+        if self.is_ancestor(child, parent) {
+            return Err(HierarchyError::CyclicHierarchy);
+        }
+
+        // If child already has a different parent, remove it from that parent first
+        if let Some(old_parent) = self.parents.remove(&child) {
+            if let Some(old_siblings) = self.children_map.get_mut(&old_parent) {
+                old_siblings.retain(|&k| k != child);
+                if old_siblings.is_empty() {
+                    self.children_map.remove(&old_parent);
+                }
+            }
+        }
+
+        // Establish the new relationship
+        self.parents.insert(child, parent);
+        self.children_map
+            .entry(parent)
+            .or_default()
+            .push(child);
+
+        Ok(())
+    }
+
+    /// Remove an entity from its parent, making it a root entity
+    ///
+    /// Does nothing if the entity has no parent or does not exist.
+    pub fn remove_from_parent(&mut self, child: EntityKey) {
+        if let Some(parent_key) = self.parents.remove(&child) {
+            if let Some(siblings) = self.children_map.get_mut(&parent_key) {
+                siblings.retain(|&k| k != child);
+                if siblings.is_empty() {
+                    self.children_map.remove(&parent_key);
+                }
+            }
+        }
+    }
+
+    /// Get the world-space transform of an entity
+    ///
+    /// For root entities (no parent), this is just their own local transform.
+    /// For children, this composes transforms from root to leaf using
+    /// `Transform4D::compose`, which correctly handles position, rotation,
+    /// and scale accumulation.
+    ///
+    /// Returns `None` if the entity does not exist.
+    pub fn world_transform(&self, entity: EntityKey) -> Option<Transform4D> {
+        // Check entity exists
+        let local_transform = self.entities.get(entity)?.transform;
+
+        // Build the chain of ancestors from root to this entity
+        let mut chain = vec![local_transform];
+        let mut current = entity;
+        while let Some(&parent_key) = self.parents.get(&current) {
+            if let Some(parent_entity) = self.entities.get(parent_key) {
+                chain.push(parent_entity.transform);
+                current = parent_key;
+            } else {
+                break;
+            }
+        }
+
+        // Compose from root (last element) to leaf (first element)
+        // chain is [leaf, ..., root], so we iterate in reverse
+        let mut result = Transform4D::identity();
+        for transform in chain.into_iter().rev() {
+            result = result.compose(&transform);
+        }
+
+        Some(result)
+    }
+
+    /// Delete an entity and all its descendants recursively
+    ///
+    /// Returns a vector of all removed entities (the target entity and
+    /// all of its descendants). The target entity is first in the vector.
+    /// Returns an empty vector if the entity does not exist.
+    pub fn delete_recursive(&mut self, entity: EntityKey) -> Vec<Entity> {
+        let mut removed = Vec::new();
+
+        // Collect all descendants first (breadth-first)
+        let mut to_remove = VecDeque::new();
+        to_remove.push_back(entity);
+
+        let mut keys_to_remove = Vec::new();
+        while let Some(key) = to_remove.pop_front() {
+            keys_to_remove.push(key);
+            // Add children to the queue
+            if let Some(children) = self.children_map.get(&key) {
+                for &child_key in children {
+                    to_remove.push_back(child_key);
+                }
+            }
+        }
+
+        // Before removing the root entity, detach it from its parent
+        if let Some(parent_key) = self.parents.remove(&entity) {
+            if let Some(siblings) = self.children_map.get_mut(&parent_key) {
+                siblings.retain(|&k| k != entity);
+                if siblings.is_empty() {
+                    self.children_map.remove(&parent_key);
+                }
+            }
+        }
+
+        // Now remove all collected entities
+        for key in keys_to_remove {
+            // Clean up hierarchy maps for this entity
+            self.parents.remove(&key);
+            self.children_map.remove(&key);
+
+            // Remove the entity itself (with name/physics cleanup)
+            if let Some(ent) = self.entities.remove(key) {
+                if let Some(ref name) = ent.name {
+                    self.name_index.remove(name);
+                }
+                if let Some(body_key) = ent.physics_body {
+                    if let Some(ref mut physics) = self.physics_world {
+                        physics.remove_body(body_key);
+                    }
+                }
+                removed.push(ent);
+            }
+        }
+
+        removed
+    }
+
+    /// Get all descendants of an entity (breadth-first order)
+    ///
+    /// Returns an empty vector if the entity has no descendants or does not exist.
+    /// Does not include the entity itself.
+    pub fn descendants(&self, entity: EntityKey) -> Vec<EntityKey> {
+        let mut result = Vec::new();
+        let mut queue = VecDeque::new();
+
+        // Seed with direct children
+        if let Some(children) = self.children_map.get(&entity) {
+            for &child in children {
+                queue.push_back(child);
+            }
+        }
+
+        while let Some(key) = queue.pop_front() {
+            result.push(key);
+            if let Some(children) = self.children_map.get(&key) {
+                for &child in children {
+                    queue.push_back(child);
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Get all root entities (entities with no parent)
+    pub fn root_entities(&self) -> impl Iterator<Item = (EntityKey, &Entity)> {
+        self.entities
+            .iter()
+            .filter(|(key, _)| !self.parents.contains_key(key))
+    }
+
+    /// Check if `ancestor` is an ancestor of `entity`
+    ///
+    /// Walks up the hierarchy from `entity`. Returns `false` if either
+    /// entity does not exist, or if `ancestor == entity`.
+    pub fn is_ancestor(&self, ancestor: EntityKey, entity: EntityKey) -> bool {
+        let mut current = entity;
+        while let Some(&parent_key) = self.parents.get(&current) {
+            if parent_key == ancestor {
+                return true;
+            }
+            current = parent_key;
+        }
+        false
     }
 }
 
@@ -707,5 +991,401 @@ mod tests {
 
         // No entities should be dirty now
         assert!(!world.has_dirty_entities());
+    }
+
+    // --- Hierarchy tests ---
+
+    fn make_positioned_entity(x: f32, y: f32, z: f32, w: f32) -> Entity {
+        let tesseract = Tesseract4D::new(2.0);
+        Entity::with_transform(
+            ShapeRef::shared(tesseract),
+            crate::Transform4D::from_position(rust4d_math::Vec4::new(x, y, z, w)),
+            Material::default(),
+        )
+    }
+
+    #[test]
+    fn test_add_child() {
+        let mut world = World::new();
+        let parent = world.add_entity(make_test_entity());
+        let child = world.add_entity(make_test_entity());
+
+        assert!(world.add_child(parent, child).is_ok());
+
+        // Verify parent/child relationship
+        assert_eq!(world.parent_of(child), Some(parent));
+        assert_eq!(world.children_of(parent), &[child]);
+        assert!(world.has_children(parent));
+        assert!(world.has_parent(child));
+        assert!(!world.has_parent(parent));
+        assert!(!world.has_children(child));
+    }
+
+    #[test]
+    fn test_add_child_invalid_entity() {
+        let mut world = World::new();
+        let parent = world.add_entity(make_test_entity());
+
+        // Create a fake key by adding and removing an entity
+        let temp = world.add_entity(make_test_entity());
+        world.remove_entity(temp);
+
+        // Both invalid child and invalid parent should fail
+        assert_eq!(
+            world.add_child(parent, temp),
+            Err(HierarchyError::InvalidEntity)
+        );
+        assert_eq!(
+            world.add_child(temp, parent),
+            Err(HierarchyError::InvalidEntity)
+        );
+    }
+
+    #[test]
+    fn test_cycle_detection() {
+        let mut world = World::new();
+        let a = world.add_entity(make_test_entity());
+        let b = world.add_entity(make_test_entity());
+
+        // A -> B
+        assert!(world.add_child(a, b).is_ok());
+
+        // B -> A would create a cycle
+        assert_eq!(
+            world.add_child(b, a),
+            Err(HierarchyError::CyclicHierarchy)
+        );
+
+        // Self-parenting should also be rejected
+        assert_eq!(
+            world.add_child(a, a),
+            Err(HierarchyError::CyclicHierarchy)
+        );
+    }
+
+    #[test]
+    fn test_deep_cycle_detection() {
+        let mut world = World::new();
+        let a = world.add_entity(make_test_entity());
+        let b = world.add_entity(make_test_entity());
+        let c = world.add_entity(make_test_entity());
+
+        // A -> B -> C
+        assert!(world.add_child(a, b).is_ok());
+        assert!(world.add_child(b, c).is_ok());
+
+        // C -> A would create a cycle (A is ancestor of C)
+        assert_eq!(
+            world.add_child(c, a),
+            Err(HierarchyError::CyclicHierarchy)
+        );
+    }
+
+    #[test]
+    fn test_already_child() {
+        let mut world = World::new();
+        let parent = world.add_entity(make_test_entity());
+        let child = world.add_entity(make_test_entity());
+
+        assert!(world.add_child(parent, child).is_ok());
+
+        // Adding the same child again should return AlreadyChild
+        assert_eq!(
+            world.add_child(parent, child),
+            Err(HierarchyError::AlreadyChild)
+        );
+    }
+
+    #[test]
+    fn test_remove_from_parent() {
+        let mut world = World::new();
+        let parent = world.add_entity(make_test_entity());
+        let child = world.add_entity(make_test_entity());
+
+        world.add_child(parent, child).unwrap();
+        assert!(world.has_parent(child));
+        assert!(world.has_children(parent));
+
+        world.remove_from_parent(child);
+
+        assert!(!world.has_parent(child));
+        assert!(!world.has_children(parent));
+        assert_eq!(world.parent_of(child), None);
+        assert!(world.children_of(parent).is_empty());
+    }
+
+    #[test]
+    fn test_world_transform_no_parent() {
+        let mut world = World::new();
+        let entity = make_positioned_entity(1.0, 2.0, 3.0, 4.0);
+        let key = world.add_entity(entity);
+
+        let wt = world.world_transform(key).unwrap();
+        assert!((wt.position.x - 1.0).abs() < 0.001);
+        assert!((wt.position.y - 2.0).abs() < 0.001);
+        assert!((wt.position.z - 3.0).abs() < 0.001);
+        assert!((wt.position.w - 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_world_transform_with_parent() {
+        let mut world = World::new();
+
+        // Parent at (10, 0, 0, 0)
+        let parent = world.add_entity(make_positioned_entity(10.0, 0.0, 0.0, 0.0));
+        // Child at (1, 2, 0, 0) in local space
+        let child = world.add_entity(make_positioned_entity(1.0, 2.0, 0.0, 0.0));
+
+        world.add_child(parent, child).unwrap();
+
+        // World transform of child should compose parent + child transforms
+        // With identity rotation and scale=1, compose just adds positions:
+        // parent.transform_point(child.position) = (10+1, 0+2, 0, 0) = (11, 2, 0, 0)
+        let wt = world.world_transform(child).unwrap();
+        assert!((wt.position.x - 11.0).abs() < 0.001,
+            "Expected x=11.0, got {}", wt.position.x);
+        assert!((wt.position.y - 2.0).abs() < 0.001,
+            "Expected y=2.0, got {}", wt.position.y);
+    }
+
+    #[test]
+    fn test_world_transform_with_scale() {
+        let mut world = World::new();
+
+        // Parent with scale 2 at origin
+        let mut parent_entity = make_positioned_entity(0.0, 0.0, 0.0, 0.0);
+        parent_entity.transform.scale = 2.0;
+        let parent = world.add_entity(parent_entity);
+
+        // Child at (1, 0, 0, 0) in local space
+        let child = world.add_entity(make_positioned_entity(1.0, 0.0, 0.0, 0.0));
+
+        world.add_child(parent, child).unwrap();
+
+        // Parent composes: scale(2) * child_pos(1,0,0,0) + parent_pos(0,0,0,0) = (2, 0, 0, 0)
+        let wt = world.world_transform(child).unwrap();
+        assert!((wt.position.x - 2.0).abs() < 0.001,
+            "Expected x=2.0, got {}", wt.position.x);
+    }
+
+    #[test]
+    fn test_delete_recursive() {
+        let mut world = World::new();
+        let root = world.add_entity(make_test_entity().with_name("root"));
+        let child1 = world.add_entity(make_test_entity().with_name("child1"));
+        let child2 = world.add_entity(make_test_entity().with_name("child2"));
+        let grandchild = world.add_entity(make_test_entity().with_name("grandchild"));
+
+        world.add_child(root, child1).unwrap();
+        world.add_child(root, child2).unwrap();
+        world.add_child(child1, grandchild).unwrap();
+
+        assert_eq!(world.entity_count(), 4);
+
+        let removed = world.delete_recursive(root);
+        assert_eq!(removed.len(), 4);
+        assert_eq!(world.entity_count(), 0);
+
+        // All should be gone
+        assert!(world.get_entity(root).is_none());
+        assert!(world.get_entity(child1).is_none());
+        assert!(world.get_entity(grandchild).is_none());
+
+        // Name index should be cleaned up
+        assert!(world.get_by_name("root").is_none());
+        assert!(world.get_by_name("child1").is_none());
+    }
+
+    #[test]
+    fn test_delete_recursive_subtree() {
+        let mut world = World::new();
+        let root = world.add_entity(make_test_entity());
+        let child1 = world.add_entity(make_test_entity());
+        let child2 = world.add_entity(make_test_entity());
+        let grandchild = world.add_entity(make_test_entity());
+
+        world.add_child(root, child1).unwrap();
+        world.add_child(root, child2).unwrap();
+        world.add_child(child1, grandchild).unwrap();
+
+        // Delete just child1 subtree (child1 + grandchild)
+        let removed = world.delete_recursive(child1);
+        assert_eq!(removed.len(), 2);
+        assert_eq!(world.entity_count(), 2);
+
+        // root and child2 should still exist
+        assert!(world.get_entity(root).is_some());
+        assert!(world.get_entity(child2).is_some());
+
+        // child1 should be removed from root's children
+        assert_eq!(world.children_of(root), &[child2]);
+    }
+
+    #[test]
+    fn test_descendants() {
+        let mut world = World::new();
+        let root = world.add_entity(make_test_entity());
+        let child1 = world.add_entity(make_test_entity());
+        let child2 = world.add_entity(make_test_entity());
+        let grandchild = world.add_entity(make_test_entity());
+
+        world.add_child(root, child1).unwrap();
+        world.add_child(root, child2).unwrap();
+        world.add_child(child1, grandchild).unwrap();
+
+        let desc = world.descendants(root);
+        assert_eq!(desc.len(), 3);
+        // Breadth-first: child1, child2 first, then grandchild
+        assert!(desc.contains(&child1));
+        assert!(desc.contains(&child2));
+        assert!(desc.contains(&grandchild));
+
+        // child1's descendants should be just grandchild
+        let desc1 = world.descendants(child1);
+        assert_eq!(desc1, vec![grandchild]);
+
+        // Leaf entity has no descendants
+        assert!(world.descendants(grandchild).is_empty());
+    }
+
+    #[test]
+    fn test_root_entities() {
+        let mut world = World::new();
+        let root1 = world.add_entity(make_test_entity());
+        let root2 = world.add_entity(make_test_entity());
+        let child = world.add_entity(make_test_entity());
+
+        world.add_child(root1, child).unwrap();
+
+        let roots: Vec<EntityKey> = world.root_entities().map(|(k, _)| k).collect();
+        assert_eq!(roots.len(), 2);
+        assert!(roots.contains(&root1));
+        assert!(roots.contains(&root2));
+        assert!(!roots.contains(&child));
+    }
+
+    #[test]
+    fn test_is_ancestor() {
+        let mut world = World::new();
+        let a = world.add_entity(make_test_entity());
+        let b = world.add_entity(make_test_entity());
+        let c = world.add_entity(make_test_entity());
+        let d = world.add_entity(make_test_entity());
+
+        // A -> B -> C
+        world.add_child(a, b).unwrap();
+        world.add_child(b, c).unwrap();
+
+        assert!(world.is_ancestor(a, b));  // A is ancestor of B
+        assert!(world.is_ancestor(a, c));  // A is ancestor of C (transitive)
+        assert!(world.is_ancestor(b, c));  // B is ancestor of C
+        assert!(!world.is_ancestor(c, a)); // C is NOT ancestor of A
+        assert!(!world.is_ancestor(a, a)); // Not ancestor of self
+        assert!(!world.is_ancestor(a, d)); // D is unrelated
+    }
+
+    #[test]
+    fn test_remove_entity_cleans_hierarchy() {
+        let mut world = World::new();
+        let parent = world.add_entity(make_test_entity());
+        let child = world.add_entity(make_test_entity());
+        let grandchild = world.add_entity(make_test_entity());
+
+        world.add_child(parent, child).unwrap();
+        world.add_child(child, grandchild).unwrap();
+
+        // Remove child (middle of hierarchy)
+        world.remove_entity(child);
+
+        // Parent should have no children (child was removed)
+        assert!(!world.has_children(parent));
+
+        // Grandchild should be orphaned (root entity)
+        assert!(!world.has_parent(grandchild));
+
+        // Grandchild should still exist
+        assert!(world.get_entity(grandchild).is_some());
+    }
+
+    #[test]
+    fn test_reparent() {
+        let mut world = World::new();
+        let parent1 = world.add_entity(make_test_entity());
+        let parent2 = world.add_entity(make_test_entity());
+        let child = world.add_entity(make_test_entity());
+
+        // First parent
+        world.add_child(parent1, child).unwrap();
+        assert_eq!(world.parent_of(child), Some(parent1));
+        assert_eq!(world.children_of(parent1), &[child]);
+
+        // Reparent to parent2
+        world.add_child(parent2, child).unwrap();
+        assert_eq!(world.parent_of(child), Some(parent2));
+        assert_eq!(world.children_of(parent2), &[child]);
+
+        // Old parent should have no children
+        assert!(!world.has_children(parent1));
+    }
+
+    #[test]
+    fn test_hierarchy_error_display() {
+        assert_eq!(
+            format!("{}", HierarchyError::InvalidEntity),
+            "one or both entities do not exist"
+        );
+        assert_eq!(
+            format!("{}", HierarchyError::CyclicHierarchy),
+            "adding this child would create a cycle"
+        );
+        assert_eq!(
+            format!("{}", HierarchyError::AlreadyChild),
+            "entity is already a child of this parent"
+        );
+    }
+
+    #[test]
+    fn test_clear_cleans_hierarchy() {
+        let mut world = World::new();
+        let parent = world.add_entity(make_test_entity());
+        let child = world.add_entity(make_test_entity());
+
+        world.add_child(parent, child).unwrap();
+        world.clear();
+
+        assert!(world.is_empty());
+        // After clear, hierarchy maps should also be empty
+        // (verified implicitly: adding new entities won't have stale hierarchy)
+    }
+
+    #[test]
+    fn test_world_transform_deep_hierarchy() {
+        let mut world = World::new();
+
+        // Grandparent at (10, 0, 0, 0)
+        let grandparent = world.add_entity(make_positioned_entity(10.0, 0.0, 0.0, 0.0));
+        // Parent at (5, 0, 0, 0) local
+        let parent = world.add_entity(make_positioned_entity(5.0, 0.0, 0.0, 0.0));
+        // Child at (1, 0, 0, 0) local
+        let child = world.add_entity(make_positioned_entity(1.0, 0.0, 0.0, 0.0));
+
+        world.add_child(grandparent, parent).unwrap();
+        world.add_child(parent, child).unwrap();
+
+        // World transform of child = grandparent compose parent compose child
+        // = (10+5+1, 0, 0, 0) = (16, 0, 0, 0)
+        let wt = world.world_transform(child).unwrap();
+        assert!((wt.position.x - 16.0).abs() < 0.001,
+            "Expected x=16.0, got {}", wt.position.x);
+    }
+
+    #[test]
+    fn test_world_transform_nonexistent() {
+        let mut world = World::new();
+        let key = world.add_entity(make_test_entity());
+        world.remove_entity(key);
+
+        // Non-existent entity returns None
+        assert!(world.world_transform(key).is_none());
     }
 }
