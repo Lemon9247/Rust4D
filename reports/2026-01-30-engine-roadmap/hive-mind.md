@@ -61,6 +61,13 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 2. **For P5**: Editor needs full physics type serialization (8+ types). Recommend deferring to split plan Phase 2. Compatible with your timeline?
 3. **For ALL**: Rotor4 serialization fix changes RON format from `[f32; 8]` arrays to struct fields `{ s: 1.0, b_xy: 0.0, ... }`. Existing scene RON files will need re-export. Be aware.
 
+### From Agent P1:
+1. **Answer to F.1**: Raycasting itself does NOT need fixed timestep -- it's an instantaneous query, not a simulation step. However, trigger enter/exit detection benefits from fixed timestep because variable dt can cause missed overlaps. Plan does not REQUIRE fixed timestep but works better with it.
+2. **For P2**: The engine-side event system is collision event DATA (`CollisionEvent` structs from `drain_collision_events()`), not a general event bus. Weapons should consume these events directly from physics, or through the game-level EventBus in `rust4d_game`. Audio triggers would come from game events, not engine events.
+3. **For P3**: `PhysicsWorld::raycast()` is the API for enemy line-of-sight. The `layer_mask` parameter lets you filter what the ray hits (e.g., `CollisionLayer::STATIC | CollisionLayer::PLAYER` for LOS checks that see through enemies).
+4. **For P4**: Trigger zones need `CollisionFilter::trigger(detects)` on static colliders. Pickup triggers should use `CollisionFilter::trigger(CollisionLayer::PLAYER)`. The game reads `TriggerEnter` events from `drain_collision_events()`.
+5. **BUG FOUND**: The current trigger system is non-functional -- `CollisionFilter::player()` excludes TRIGGER from its mask, and the symmetric `collides_with()` means triggers never detect players. My plan fixes this with an asymmetric trigger detection pass.
+
 ## Status
 - [x] Agent F (Foundation): COMPLETE
 - [x] Agent P1 (Combat Core): COMPLETE
@@ -85,3 +92,13 @@ The engine/game split plan covers ECS migration and the split itself (9.5-14 ses
 - **Diagonal movement is 41-73% faster** due to un-normalized movement direction. In 4D this is worse than 3D (3 movement axes = sqrt(3) speed multiplier).
 - **Back-face culling was disabled for debugging** and never re-enabled. May reveal winding order issues in the compute shader.
 - **All foundation items should be done BEFORE ECS migration** -- they clean up the codebase the ECS work will touch.
+
+### Agent P1 (Combat Core):
+- **Engine-side estimate: 1.75 sessions** (down from original 3.5 because health/damage is purely game work).
+- **Trigger system design bug found**: `CollisionFilter::trigger()` and `CollisionFilter::player()` are incompatible -- the symmetric `collides_with()` check means triggers NEVER detect players. Fix: asymmetric trigger overlap detection pass in `step()`.
+- **Health/Damage is 100% game-side.** The engine provides collision events and raycasting; the game defines Health components and damage logic.
+- **Engine needs collision event DATA, not an event BUS.** `PhysicsWorld` accumulates `CollisionEvent` structs during `step()` and exposes `drain_collision_events()`. The event bus belongs in `rust4d_game`.
+- **Raycasting split**: `Ray4D` struct in `rust4d_math` (geometric primitive), ray-shape intersections + world raycast in `rust4d_physics`.
+- **Vec4 gaps**: missing `distance()`, `distance_squared()`, and `f32 * Vec4` operator. Should fix alongside raycasting.
+- **`sphere_vs_sphere` is private** on PhysicsWorld but should be a public standalone function like the other collision tests.
+- **Parallelism**: Raycasting (ray math + world queries) and collision events (trigger detection + enter/exit tracking) can be implemented in parallel by different agents.
