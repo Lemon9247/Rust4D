@@ -178,8 +178,8 @@ This is the first major parallelism point. The scripting runtime and the combat 
 |-------|------|------|----------|
 | **Swarm A** | Scripting Core Runtime (Sub-Phase A) | [post-split-phase-scripting.md](./post-split-phase-scripting.md) | 2 |
 | **Swarm A** | Scripting ECS Bindings (Sub-Phase B) | [post-split-phase-scripting.md](./post-split-phase-scripting.md) | 2-3 |
-| **Swarm B** | P1-A: Raycasting | [post-split-phase-1-combat-core.md](./post-split-phase-1-combat-core.md) + [amendments](./lua-phase-amendments.md) | 1 |
-| **Swarm B** | P1-B: Collision Events + Triggers | [post-split-phase-1-combat-core.md](./post-split-phase-1-combat-core.md) + [amendments](./lua-phase-amendments.md) | 0.75-1.0 |
+| **Swarm B** | P1-A: Raycasting | [post-split-phase-1-combat-core.md](./post-split-phase-1-combat-core.md) | 1 |
+| **Swarm B** | P1-B: Collision Events + Triggers | [post-split-phase-1-combat-core.md](./post-split-phase-1-combat-core.md) | 0.75-1.0 |
 
 **Swarm A** (Scripting): Lua VM init, script loading, lifecycle callbacks, ECS bindings. This gives us a working `rust4d_scripting` that can spawn entities and run update loops in Lua.
 
@@ -197,7 +197,7 @@ The biggest parallelism opportunity. Multiple engine features build simultaneous
 | Swarm | Task | Plan | Estimate |
 |-------|------|------|----------|
 | **Swarm A** | P2-A: Audio System (rust4d_audio + kira) | [post-split-phase-2-weapons-feedback.md](./post-split-phase-2-weapons-feedback.md) | 1.5-2 |
-| **Swarm A** | P2-B: HUD/egui Overlay + LuaHud API | [post-split-phase-2-weapons-feedback.md](./post-split-phase-2-weapons-feedback.md) + [amendments](./lua-phase-amendments.md) | 1-1.5 |
+| **Swarm A** | P2-B: HUD/egui Overlay + LuaHud API | [post-split-phase-2-weapons-feedback.md](./post-split-phase-2-weapons-feedback.md) | 1-1.5 |
 | **Swarm B** | P2-C: Particle System | [post-split-phase-2-weapons-feedback.md](./post-split-phase-2-weapons-feedback.md) | 1.5-2 |
 | **Swarm B** | P3-A: Sprite/Billboard Pipeline | [post-split-phase-3-enemies-ai.md](./post-split-phase-3-enemies-ai.md) | 1.5 |
 | **Swarm C** | P3-B: Spatial Queries + Area Damage | [post-split-phase-3-enemies-ai.md](./post-split-phase-3-enemies-ai.md) | 0.5-1 |
@@ -223,7 +223,7 @@ Integration wave: wire everything together, build the engine launcher, start the
 | Swarm | Task | Plan | Estimate |
 |-------|------|------|----------|
 | **Swarm A** | P2-D: Screen Effects (ScreenShake, TimedEffect) | [post-split-phase-2-weapons-feedback.md](./post-split-phase-2-weapons-feedback.md) | 0.5 |
-| **Swarm A** | P4-D: Declarative Trigger System + Lua callbacks | [post-split-phase-4-level-design.md](./post-split-phase-4-level-design.md) + [amendments](./lua-phase-amendments.md) | 1.0 |
+| **Swarm A** | P4-D: Declarative Trigger System + Lua callbacks | [post-split-phase-4-level-design.md](./post-split-phase-4-level-design.md) | 1.0 |
 | **Swarm A** | Scripting: Game Framework Bindings (Sub-Phase E) | [post-split-phase-scripting.md](./post-split-phase-scripting.md) | 1-2 |
 | **Swarm B** | Engine Binary / Launcher | [engine-game-split.md](./engine-game-split.md) Phase 4 | 2-3 |
 | **Swarm C** | Game Phase 0: Project Setup + Core Loop | [game-roadmap-lua.md](./game-roadmap-lua.md) | 1 |
@@ -245,7 +245,7 @@ Engine and game development run in parallel. Engine builds remaining features; g
 |-------|------|------|----------|
 | **Swarm A (Engine)** | P5-A: Texture Support (triplanar) | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) | 1.5-2.5 |
 | **Swarm A (Engine)** | P5-B: Lighting (point lights + shadows) | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) | 2 |
-| **Swarm A (Engine)** | P5-C: Input Rebinding + Lua API | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) + [amendments](./lua-phase-amendments.md) | 0.5 |
+| **Swarm A (Engine)** | P5-C: Input Rebinding + Lua API | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) | 0.5 |
 | **Swarm A (Engine)** | Engine Cleanup | [engine-game-split.md](./engine-game-split.md) Phase 6 | 0.5-1 |
 | **Swarm B (Game)** | Game Phase 1: Combat Core | [game-roadmap-lua.md](./game-roadmap-lua.md) | 2-3 |
 | **Swarm B (Game)** | Game Phase 2: HUD + Audio + Feedback | [game-roadmap-lua.md](./game-roadmap-lua.md) | 2-3 |
@@ -264,7 +264,7 @@ The editor framework starts after textures/lighting land. Game continues buildin
 
 | Swarm | Task | Plan | Estimate |
 |-------|------|------|----------|
-| **Swarm A (Engine)** | P5-D: Editor Framework (rust4d_editor) | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) + [amendments](./lua-phase-amendments.md) | 6-8 |
+| **Swarm A (Engine)** | P5-D: Editor Framework (rust4d_editor) | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) | 6-8 |
 | **Swarm B (Game)** | Game Phase 3: Enemies | [game-roadmap-lua.md](./game-roadmap-lua.md) | 3-4 |
 | **Swarm B (Game)** | Game Phase 4: Level Design | [game-roadmap-lua.md](./game-roadmap-lua.md) | 2-3 |
 
@@ -355,6 +355,6 @@ Before starting each wave:
 | [post-split-phase-3-enemies-ai.md](./post-split-phase-3-enemies-ai.md) | Sprites + spatial queries |
 | [post-split-phase-4-level-design.md](./post-split-phase-4-level-design.md) | Shapes + tools + triggers |
 | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) | Editor + lighting + textures |
-| [lua-phase-amendments.md](./lua-phase-amendments.md) | Lua-specific changes to P1-P5 |
+| ~~lua-phase-amendments.md~~ | Superseded -- merged into each phase plan |
 | [lua-migration-analysis.md](./lua-migration-analysis.md) | Migration impact analysis |
 | [game-roadmap-lua.md](./game-roadmap-lua.md) | Lua game roadmap |

@@ -113,16 +113,16 @@ Rust4D-Shooter/                      # Game repo (Lua + data)
 
 ## Part III: Post-Split Engine Features
 
-After the split is complete, these phases add engine capabilities. Each phase includes Lua binding work alongside the core Rust implementation. Read each phase plan together with [lua-phase-amendments.md](./lua-phase-amendments.md) for Lua-specific changes.
+After the split is complete, these phases add engine capabilities. Each phase plan includes Lua binding work integrated directly alongside the core Rust implementation.
 
 | Phase | Plan | Sessions (with Lua) | Status | Key Dependencies |
 |-------|------|---------------------|--------|------------------|
 | Scripting | [post-split-phase-scripting.md](./post-split-phase-scripting.md) | 8-11 | Planned | Split Phase 2 (rust4d_game exists) |
-| P1: Combat Core | [post-split-phase-1-combat-core.md](./post-split-phase-1-combat-core.md) + [amendments](./lua-phase-amendments.md#phase-1-combat-core----amendments) | 2.25-2.5 | Planned | Split complete |
-| P2: Weapons & Feedback | [post-split-phase-2-weapons-feedback.md](./post-split-phase-2-weapons-feedback.md) + [amendments](./lua-phase-amendments.md#phase-2-weapons--feedback----amendments) | 5.5-7.0 | Planned | P1 (raycasting) |
-| P3: Enemies & AI | [post-split-phase-3-enemies-ai.md](./post-split-phase-3-enemies-ai.md) + [amendments](./lua-phase-amendments.md#phase-3-enemies--ai----amendments) | 3.75-4.5 | Planned | P1 (raycasting for LOS) |
-| P4: Level Design | [post-split-phase-4-level-design.md](./post-split-phase-4-level-design.md) + [amendments](./lua-phase-amendments.md#phase-4-level-design-pipeline----amendments) | 4.25-5.0 | Planned | P1 (trigger events) |
-| P5: Editor & Polish | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) + [amendments](./lua-phase-amendments.md#phase-5-editor--polish----amendments) | 11.5-15 | Planned | All prior phases |
+| P1: Combat Core | [post-split-phase-1-combat-core.md](./post-split-phase-1-combat-core.md) | 2.25-2.5 | Planned | Split complete |
+| P2: Weapons & Feedback | [post-split-phase-2-weapons-feedback.md](./post-split-phase-2-weapons-feedback.md) | 5.5-7.0 | Planned | P1 (raycasting) |
+| P3: Enemies & AI | [post-split-phase-3-enemies-ai.md](./post-split-phase-3-enemies-ai.md) | 3.75-4.5 | Planned | P1 (raycasting for LOS) |
+| P4: Level Design | [post-split-phase-4-level-design.md](./post-split-phase-4-level-design.md) | 4.25-5.0 | Planned | P1 (trigger events) |
+| P5: Editor & Polish | [post-split-phase-5-editor-polish.md](./post-split-phase-5-editor-polish.md) | 11.5-15 | Planned | All prior phases |
 
 **Note:** The Scripting phase builds the core Lua runtime and foundational bindings. P1-P5 each add bindings for their specific APIs as they're implemented. Binding work is incremental -- it rolls out alongside each phase.
 
@@ -171,13 +171,13 @@ See [execution-plan.md](./execution-plan.md) for the parallelized wave breakdown
 | [Advanced Rendering](./superseded/long-term-rendering.md) | Superseded | Post-Split P5 Sub-Phases A+B |
 | [Rust Game Roadmap](./superseded/game-roadmap-summary.md) | Superseded | game-roadmap-lua.md |
 | [Rust Split Summary](./superseded/split-phases-1-5.md) | Superseded | engine-game-split.md (rewritten for Lua) |
+| [Lua Phase Amendments](./superseded/lua-phase-amendments.md) | Superseded | Merged into each phase plan (P1-P5) on 2026-01-31 |
 
 ### Reference Documents
 
 | Document | Purpose |
 |----------|---------|
 | [lua-migration-analysis.md](./lua-migration-analysis.md) | Analysis of what changes with Lua approach (binding surface, risks) |
-| [lua-phase-amendments.md](./lua-phase-amendments.md) | Per-phase amendments for P1-P5 (read alongside each phase plan) |
 
 ---
 

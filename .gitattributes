@@ -1,0 +1,4 @@
+# Override linguist language detection for markdown files
+# Some .md files contain inline Lua/Rust code blocks that cause
+# misdetection as JavaScript, C, or Nim by heuristic tools.
+*.md linguist-language=Markdown
