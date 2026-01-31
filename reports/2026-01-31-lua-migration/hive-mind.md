@@ -39,14 +39,16 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 
 ## Status
 - [ ] Agent Analysis: Pending
-- [ ] Agent Split: Pending
+- [x] Agent Split: Complete -- rewrote engine-game-split.md for Lua approach (6 phases, 14.5-22 sessions)
 - [ ] Agent Scripting: Pending
 - [ ] Agent Amendments: Pending
 - [ ] Agent Game: Pending
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
-(Update as reports are written)
+- `agent-split-report.md` - Split agent completion report
 
 ## Key Findings
-(Summarize major discoveries as they emerge)
+- **Split agent**: Total effort increases from 9.5-14 to 14.5-22 sessions. The Lua scripting phase (4-6 sessions) is the main new work. Game repo setup is simpler (1-2 sessions vs 1-2 sessions for Rust). Phase 3 (Lua Scripting Integration) has internal parallelism -- bindings for different modules are independent.
+- **Split agent**: Answered key design questions: mlua with Lua 5.4, callbacks for lifecycle, `persist` table + module invalidation for hot-reload, string-based ECS queries from Lua, `ScriptComponent` wrapper for Lua-defined components in hecs.
+- **Split agent**: Old Phase 3 (Pluggable Scenes) merged into Phase 2 since scene helpers fit naturally in the rust4d_game crate extraction.
