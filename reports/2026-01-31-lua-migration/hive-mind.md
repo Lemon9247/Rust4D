@@ -42,13 +42,14 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 - [x] Agent Split: Complete -- rewrote engine-game-split.md for Lua approach (6 phases, 14.5-22 sessions)
 - [x] Agent Scripting: Complete -- created post-split-phase-scripting.md (5 sub-phases, 8-11 sessions)
 - [x] Agent Amendments: Complete -- produced lua-phase-amendments.md with per-phase analysis (P1-P5)
-- [ ] Agent Game: Pending
+- [x] Agent Game: Complete -- created game-roadmap-lua.md (6 phases, 12-18 sessions, 5 example scripts)
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `agent-split-report.md` - Split agent completion report
 - `agent-amendments-report.md` - Amendments agent completion report
 - `agent-scripting-report.md` - Scripting agent completion report
+- `agent-game-report.md` - Game agent completion report
 
 ## Key Findings
 - **Split agent**: Total effort increases from 9.5-14 to 14.5-22 sessions. The Lua scripting phase (4-6 sessions) is the main new work. Game repo setup is simpler (1-2 sessions vs 1-2 sessions for Rust). Phase 3 (Lua Scripting Integration) has internal parallelism -- bindings for different modules are independent.
@@ -67,3 +68,10 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 - **Scripting agent**: HUD bindings use simplified draw API (hud.text, hud.rect) rather than exposing full egui. Advanced layouts require Rust.
 - **Scripting agent**: Timer system (timers.after, timers.every) implemented as pure Lua standard library -- no Rust binding needed.
 - **Scripting agent**: Sub-Phases B and D can run in parallel after A completes. Sub-Phase C is incremental -- bindings roll out as P1-P4 APIs arrive.
+- **Game agent**: Total game effort: 12-18 sessions (down from 13-21 in Rust). Faster iteration offsets the debugging cost of dynamic typing.
+- **Game agent**: Game Phase 0 can start as soon as scripting runtime is functional -- no need to wait for P1-P5 engine phases. This enables earlier parallel game development.
+- **Game agent**: Key pattern: "state on entities, logic in scripts." All mutable game state lives on ECS entities as Lua tables, surviving hot-reload. Scripts contain only logic and constants.
+- **Game agent**: Five substantial example scripts serve as API specification for the scripting phase: main.lua, combat.lua, shotgun.lua, rusher.lua, hud.lua. These use engine.ecs, engine.physics, engine.audio, engine.ui, engine.particles, engine.screen_shake, engine.events, engine.camera, engine.vec4.
+- **Game agent**: W-axis gameplay design preserved from Rust roadmap and expanded with Lua-specific implementation notes.
+- **Game agent**: Recommends LuaJIT over Lua 5.4 for performance, but defers to Agent Scripting's decision.
+- **Game agent**: Modding support is nearly free -- players modify the same Lua scripts the game uses. No special modding API needed.
