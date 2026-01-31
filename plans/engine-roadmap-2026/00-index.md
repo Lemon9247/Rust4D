@@ -23,11 +23,11 @@ These phases are **COMPLETE**. They established the engine's foundation: 4D math
 
 | Phase | Plan | Sessions | Status |
 |-------|------|----------|--------|
-| 1 | [Foundation](./phase-1-foundation.md) | 4 | **COMPLETE** |
-| 2 | [Scene Management](./phase-2-scene-management.md) | 3 | **COMPLETE** (via EntityTemplate) |
-| 3 | [Documentation](./phase-3-documentation.md) | 4-5 | **COMPLETE** |
-| 4 | [Architecture](./phase-4-architecture.md) | 4 | **COMPLETE** |
-| 5 | [Advanced Features](./phase-5-advanced-features.md) | 5-6 | **COMPLETE** |
+| 1 | [Foundation](./completed/phase-1-foundation.md) | 4 | **COMPLETE** |
+| 2 | [Scene Management](./completed/phase-2-scene-management.md) | 3 | **COMPLETE** (via EntityTemplate) |
+| 3 | [Documentation](./completed/phase-3-documentation.md) | 4-5 | **COMPLETE** |
+| 4 | [Architecture](./completed/phase-4-architecture.md) | 4 | **COMPLETE** |
+| 5 | [Advanced Features](./completed/phase-5-advanced-features.md) | 5-6 | **COMPLETE** |
 
 **Total completed: ~20-22 sessions**
 
@@ -69,7 +69,7 @@ All tasks are independent and can be parallelized, though the total is small eno
 ### Stage 2: Engine/Game Split (9.5-14 sessions)
 
 **Summary:** [split-phases-1-5.md](./split-phases-1-5.md)
-**Full plan:** `scratchpad/plans/2026-01-30-engine-game-split.md`
+**Full plan:** [engine-game-split.md](./engine-game-split.md)
 
 | Phase | Name | Sessions | Depends On | Parallel? |
 |-------|------|----------|------------|-----------|
@@ -314,11 +314,11 @@ The following long-term plans were created during the original Phase 1-5 roadmap
 
 | Plan | Status | Superseded By |
 |------|--------|---------------|
-| [ECS Migration](./long-term-ecs.md) | Superseded | Split Phases 1-5 (full hecs migration) |
-| [Visual Scene Editor](./long-term-visual-editor.md) | Superseded | Post-Split P5 Sub-Phase D (rust4d_editor crate) |
-| [Scripting System](./long-term-scripting.md) | Superseded | Post-Split P4 Sub-Phase D (declarative triggers cover 80%) |
-| [Networking](./long-term-networking.md) | Deferred | Not in current roadmap; foundation laid by fixed timestep + serialization |
-| [Advanced Rendering](./long-term-rendering.md) | Superseded | Post-Split P5 Sub-Phases A+B (textures + lighting) |
+| [ECS Migration](./superseded/long-term-ecs.md) | Superseded | Split Phases 1-5 (full hecs migration) |
+| [Visual Scene Editor](./superseded/long-term-visual-editor.md) | Superseded | Post-Split P5 Sub-Phase D (rust4d_editor crate) |
+| [Scripting System](./superseded/long-term-scripting.md) | Superseded | Post-Split P4 Sub-Phase D (declarative triggers cover 80%) |
+| [Networking](./superseded/long-term-networking.md) | Deferred | Not in current roadmap; foundation laid by fixed timestep + serialization |
+| [Advanced Rendering](./superseded/long-term-rendering.md) | Superseded | Post-Split P5 Sub-Phases A+B (textures + lighting) |
 
 ---
 
@@ -355,7 +355,7 @@ The following long-term plans were created during the original Phase 1-5 roadmap
 ### For the Engine/Game Split
 
 1. Start with `split-phase-0-foundation.md` for pre-split fixes
-2. Follow the full split plan at `scratchpad/plans/2026-01-30-engine-game-split.md`
+2. Follow the full split plan at [engine-game-split.md](./engine-game-split.md)
 3. Reference `split-phases-1-5.md` for a quick summary
 
 ### For Post-Split Feature Work
@@ -396,7 +396,7 @@ These plans were synthesized from multiple review swarms:
 - `scratchpad/reports/2026-01-30-multi-engine-review/swarm-c-features/` -- Feature and genre analysis
 
 ### Engine/Game Split Plan (2026-01-30)
-- `scratchpad/plans/2026-01-30-engine-game-split.md` -- Full split implementation plan
+- [engine-game-split.md](./engine-game-split.md) -- Full split implementation plan
 
 ### Engine Roadmap Planning Swarm (2026-01-30)
 - `scratchpad/reports/2026-01-30-engine-roadmap/hive-mind.md` -- Cross-phase coordination notes

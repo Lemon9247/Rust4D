@@ -31,28 +31,25 @@ Combine the engine roadmap agent reports (6 agents), the engine/game split plan,
 7. **Agent Editor** - Creates `post-split-phase-5-editor-polish.md` from Agent P5 report
 8. **Agent Game** - Creates `game-roadmap-summary.md` consolidating all game-side work from all agent reports
 
-## Coordination Notes
-- Each agent writes their planning document(s) directly to `scratchpad/plans/engine-roadmap-2026/`
-- Each agent also writes a brief completion report to this swarm folder
-- Agents should preserve full implementation detail from source reports
-- The Index agent should wait for others or work from the source reports directly
-
-## Questions for Discussion
-(Agents add cross-cutting questions here)
-
 ## Status
-- [ ] Agent Index: Pending
-- [ ] Agent Pre-Split: Pending
-- [ ] Agent Combat: Pending
-- [ ] Agent Media: Pending
-- [ ] Agent Enemies: Pending
-- [ ] Agent Levels: Pending
-- [ ] Agent Editor: Pending
-- [ ] Agent Game: Pending
-- [ ] Final synthesis: Pending
+- [x] Agent Pre-Split: COMPLETE
+- [x] Agent Combat: COMPLETE
+- [x] Agent Media: COMPLETE
+- [x] Agent Enemies: COMPLETE
+- [x] Agent Levels: COMPLETE
+- [x] Agent Editor: COMPLETE
+- [x] Agent Game: COMPLETE
+- [x] Agent Index: COMPLETE
+- [x] Folder reorganization: COMPLETE (completed/ and superseded/ subdirectories)
+- [x] Final synthesis: COMPLETE
 
 ## Reports Generated
-(Update as reports are written)
-
-## Key Findings
-(Summarize major discoveries as they emerge)
+- `agent-pre-split-report.md` - Pre-Split Agent (split-phase-0-foundation.md + split-phases-1-5.md)
+- `agent-combat-report.md` - Combat Agent (post-split-phase-1-combat-core.md)
+- `agent-media-report.md` - Media Agent (post-split-phase-2-weapons-feedback.md)
+- `agent-enemies-report.md` - Enemies Agent (post-split-phase-3-enemies-ai.md)
+- `agent-levels-report.md` - Levels Agent (post-split-phase-4-level-design.md)
+- `agent-editor-report.md` - Editor Agent (post-split-phase-5-editor-polish.md)
+- `agent-game-report.md` - Game Agent (game-roadmap-summary.md)
+- `agent-index-report.md` - Index Agent (00-index.md)
+- `final-synthesis-report.md` - Final synthesis

@@ -1,6 +1,6 @@
 # Phases 1-5: Engine/Game Split Plan Summary
 
-**Full Plan**: `scratchpad/plans/2026-01-30-engine-game-split.md`
+**Full Plan**: `scratchpad/plans/engine-roadmap-2026/engine-game-split.md`
 **Status**: Planned (depends on Phase 0 Foundation completion)
 **Total Estimated Effort**: 9.5-14 sessions
 
@@ -13,7 +13,7 @@ This document is a **summary reference** to the full engine/game split plan. The
 1. **Rust4D Engine** (this repo, refactored) -- a generic 4D game engine library
 2. **Rust4D Shooter** (new repo) -- the 4D boomer shooter game, distributed via Steam
 
-The full plan lives at `scratchpad/plans/2026-01-30-engine-game-split.md` and contains complete file-level task lists, code examples, and implementation details. This summary captures the key milestones, estimates, and decisions for quick reference.
+The full plan lives at `scratchpad/plans/engine-roadmap-2026/engine-game-split.md` and contains complete file-level task lists, code examples, and implementation details. This summary captures the key milestones, estimates, and decisions for quick reference.
 
 ---
 
