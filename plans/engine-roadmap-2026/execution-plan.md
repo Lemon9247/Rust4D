@@ -15,6 +15,115 @@ A wave completes when all its swarms finish. Some waves have a single swarm (seq
 
 ---
 
+## Visual Overview
+
+```
+SESSION  1       5       10      15      20      25      30      35
+         |       |       |       |       |       |       |       |
+Wave 0   [Foundation + Shapes]
+         |
+Wave 1   [========= ECS Migration =========]
+                                            |
+Wave 2                                      [==== Game Logic ====]
+                                                                  |
+         ┌────────────────────────────────────────────────────────┤
+Wave 3   │ Swarm A: [==== Scripting Core + ECS Bindings ====]    │
+         │ Swarm B: [== Raycasting ==][= Events =]               │
+         └────────────────────────────────────────────────────────┤
+                                                                  |
+         ┌────────────────────────────────────────────────────────┤
+         │ Swarm A: [= Audio (kira) =][HUD+LuaHud]               │
+Wave 4   │ Swarm B: [= Particles =][= Sprites =]                 │
+         │ Swarm C: [Spatial][RON Preview][Tween]                 │
+         │ Swarm D: [=== API Bindings ===][Hot-Reload]            │
+         └────────────────────────────────────────────────────────┤
+                                                                  |
+         ┌────────────────────────────────────────────────────────┤
+Wave 5   │ Swarm A: [Screen FX][Triggers+Lua][Game Fwk Bindings] │
+         │ Swarm B: [=== Engine Binary / Launcher ===]            │
+         │ Swarm C: [Game P0: Setup]                              │
+         └────────────────────────────────────────────────────────┤
+                                                                  |
+         ┌────────────────────────────────────────────────────────┤
+Wave 6   │ Swarm A: [Textures][Lighting][Input][Cleanup]          │
+         │ Swarm B: [= Game P1: Combat =][= Game P2: Weapons =]  │
+         └────────────────────────────────────────────────────────┤
+                                                                  |
+         ┌────────────────────────────────────────────────────────┤
+Wave 7   │ Swarm A: [========= Editor Framework =========]       │
+         │ Swarm B: [== Game P3: Enemies ==][= Game P4: Levels =]│
+         └────────────────────────────────────────────────────────┤
+                                                                  |
+Wave 8   [= Game P5: Polish + Distribution =]
+                                                                DONE
+```
+
+### Dependency Flow
+
+```
+                    ┌─────────────────────────────────┐
+                    │  Wave 0: Foundation + Shapes     │
+                    └───────────────┬─────────────────┘
+                                    │
+                    ┌───────────────▼─────────────────┐
+                    │  Wave 1: ECS Migration (hecs)    │
+                    └───────────────┬─────────────────┘
+                                    │
+                    ┌───────────────▼─────────────────┐
+                    │  Wave 2: Game Logic Extraction    │
+                    └───────────────┬─────────────────┘
+                                    │
+                  ┌─────────────────┼─────────────────┐
+                  │                 │                   │
+         ┌────────▼───────┐ ┌──────▼──────┐           │
+         │ Scripting Core │ │ Combat Core │           │
+         │  + ECS Binds   │ │ Raycast     │           │
+         │  (Wave 3A)     │ │ Events      │           │
+         └────────┬───────┘ │ (Wave 3B)   │           │
+                  │         └──────┬──────┘           │
+                  │                │                   │
+        ┌─────────┴────────────────┴───────────┐      │
+        │         Wave 4: Max Parallelism       │      │
+        │  ┌───────┐ ┌───────┐ ┌───────┐       │      │
+        │  │Audio  │ │Particl│ │Spatial│       │      │
+        │  │HUD    │ │Sprites│ │RON    │       │      │
+        │  │LuaHud │ │       │ │Tweens │       │      │
+        │  └───┬───┘ └───┬───┘ └───┬───┘       │      │
+        │      │    API Bindings + Hot-Reload    │      │
+        └──────┴──────────┴─────────┴───────────┘      │
+                          │                             │
+              ┌───────────┴──────────────┐              │
+              │  Wave 5: Integration     │              │
+              │  Triggers, Engine Binary  │──────────────┘
+              │  Game Phase 0             │
+              └───────────┬──────────────┘
+                          │
+            ┌─────────────┼─────────────┐
+            │             │             │
+   ┌────────▼────┐ ┌─────▼──────┐      │
+   │ Textures    │ │ Game P1    │      │
+   │ Lighting    │ │ Game P2    │      │
+   │ Input       │ │ (Combat,   │      │
+   │ (Wave 6A)   │ │  Weapons)  │      │
+   └────────┬────┘ └─────┬──────┘      │
+            │             │             │
+   ┌────────▼────┐ ┌─────▼──────┐      │
+   │ Editor      │ │ Game P3    │      │
+   │ Framework   │ │ Game P4    │      │
+   │ (Wave 7A)   │ │ (Enemies,  │      │
+   │             │ │  Levels)   │      │
+   └────────┬────┘ └─────┬──────┘      │
+            │             │             │
+            └─────────────┴─────────────┘
+                          │
+              ┌───────────▼──────────────┐
+              │  Wave 8: Final Polish     │
+              │  Game P5 + Distribution   │
+              └──────────────────────────┘
+```
+
+---
+
 ## Wave 0: Pre-Split Foundation
 **Swarms:** 1 | **Sessions:** ~1 | **Blocked by:** Nothing
 
