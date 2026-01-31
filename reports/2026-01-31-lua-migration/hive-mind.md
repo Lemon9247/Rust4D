@@ -41,14 +41,21 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 - [ ] Agent Analysis: Pending
 - [x] Agent Split: Complete -- rewrote engine-game-split.md for Lua approach (6 phases, 14.5-22 sessions)
 - [ ] Agent Scripting: Pending
-- [ ] Agent Amendments: Pending
+- [x] Agent Amendments: Complete -- produced lua-phase-amendments.md with per-phase analysis (P1-P5)
 - [ ] Agent Game: Pending
 - [ ] Final synthesis: Pending
 
 ## Reports Generated
 - `agent-split-report.md` - Split agent completion report
+- `agent-amendments-report.md` - Amendments agent completion report
 
 ## Key Findings
 - **Split agent**: Total effort increases from 9.5-14 to 14.5-22 sessions. The Lua scripting phase (4-6 sessions) is the main new work. Game repo setup is simpler (1-2 sessions vs 1-2 sessions for Rust). Phase 3 (Lua Scripting Integration) has internal parallelism -- bindings for different modules are independent.
 - **Split agent**: Answered key design questions: mlua with Lua 5.4, callbacks for lifecycle, `persist` table + module invalidation for hot-reload, string-based ECS queries from Lua, `ScriptComponent` wrapper for Lua-defined components in hecs.
 - **Split agent**: Old Phase 3 (Pluggable Scenes) merged into Phase 2 since scene helpers fit naturally in the rust4d_game crate extraction.
+- **Amendments agent**: Total P1-P5 session impact is +2.5-6.2 sessions (with minimal scoping: +2.5). All Rust implementations unchanged; Lua adds binding layer on top.
+- **Amendments agent**: Biggest new item is HUD API for Lua (P2, +0.5-1.0 sessions) -- egui's Rust API cannot be directly exposed to Lua.
+- **Amendments agent**: FSM framework (P3) becomes unnecessary -- Lua handles state machines natively. Saves ~0.25 sessions.
+- **Amendments agent**: Trigger system (P4) dramatically improved -- `GameEvent(String)` replaced by `TriggerAction::Callback(String)` calling Lua functions directly.
+- **Amendments agent**: Editor (P5) needs script editing panel + Lua console. Minimal scope: +0.5 sessions; full scope: +2.5 sessions.
+- **Amendments agent**: Open question for Agent Split: does `rust4d_game` still make sense? Many planned types (EventBus, GameEvent, FSM) become unnecessary with Lua.
