@@ -217,9 +217,9 @@ impl World {
     /// 2. Syncs entity transforms from their associated physics bodies
     /// 3. Marks entities as dirty when their transforms change
     pub fn update(&mut self, dt: f32) {
-        // Step the physics simulation
+        // Update the physics simulation (fixed timestep accumulator)
         if let Some(ref mut physics) = self.physics_world {
-            physics.step(dt);
+            physics.update(dt);
         }
 
         // Sync entity transforms from their physics bodies
@@ -682,12 +682,17 @@ mod tests {
         // Verify initial position
         assert_eq!(world.get_entity(entity_handle).unwrap().transform.position.x, 0.0);
 
-        // Step physics (1 second with 10 units/sec velocity = 10 units displacement)
-        world.update(1.0);
+        // Simulate 1 second in realistic frame-sized increments
+        // (physics uses fixed timestep accumulator, large dt is clamped)
+        for _ in 0..60 {
+            world.update(1.0 / 60.0);
+        }
 
         // Entity transform should now reflect the physics body position
+        // ~10 units displacement (10 units/sec * ~1s, slight variance from fixed step rounding)
         let entity = world.get_entity(entity_handle).unwrap();
-        assert!((entity.transform.position.x - 10.0).abs() < 0.001);
+        assert!((entity.transform.position.x - 10.0).abs() < 0.2,
+            "Expected ~10.0, got {}", entity.transform.position.x);
         assert!((entity.transform.position.y - 5.0).abs() < 0.001);
     }
 

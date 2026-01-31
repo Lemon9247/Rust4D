@@ -57,8 +57,9 @@ impl SimulationSystem {
         // 1. Calculate delta time
         let now = Instant::now();
         let raw_dt = (now - self.last_frame).as_secs_f32();
-        // Cap dt to prevent huge physics steps on first frame or after window focus
-        let dt = raw_dt.min(1.0 / 30.0); // Max 33ms per frame
+        // Cap dt to prevent spiral of death on first frame or after window focus
+        // The physics accumulator further subdivides into fixed timesteps
+        let dt = raw_dt.min(0.25);
         self.last_frame = now;
 
         // 2. Get movement input from controller
