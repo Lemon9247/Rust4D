@@ -2,29 +2,30 @@
 
 **Source:** Agent P4 report (`scratchpad/reports/2026-01-30-engine-roadmap/agent-p4-report.md`)
 **Created:** 2026-01-31
+**Updated 2026-01-31:** Integrated Lua scripting amendments from `lua-phase-amendments.md`
 **Status:** Planning
-**Engine Effort:** 4.5 sessions
-**Prerequisite:** Engine/game split complete (ECS migration done, `rust4d_game` exists, game repo exists)
+**Engine Effort:** 4.75-5.0 sessions (originally 4.5; +0.25-0.5 for Lua trigger/tween bindings, -0.25 for simplified trigger runtime)
+**Prerequisite:** Engine/game split complete (ECS migration done, `rust4d_game` exists, game repo exists), `rust4d_scripting` crate exists with mlua integration
 
 ---
 
 ## 1. Overview
 
-Phase 4 builds the engine infrastructure required for 4D level design. The original cross-swarm synthesis described this phase as "Can build real levels" and included four items: RON preview tool, additional shape types, door/elevator mechanics, and a pickup system. After re-evaluation for the engine/game split, the scope divides cleanly:
+Phase 4 builds the engine infrastructure required for 4D level design. The original cross-swarm synthesis described this phase as "Can build real levels" and included four items: RON preview tool, additional shape types, door/elevator mechanics, and a pickup system. After re-evaluation for the engine/game split and the Lua scripting migration, the scope divides cleanly:
 
 **Engine provides:**
 - Shape type expansion (new geometric primitives for level geometry)
 - RON preview tool with hot-reload (level design feedback loop)
-- Tween/interpolation system (smooth property animation)
-- Declarative trigger data model and runtime (RON-defined level scripting)
+- Tween/interpolation system (smooth property animation) with Lua bindings
+- Declarative trigger data model and runtime (RON-defined level scripting) with Lua callback integration
 
-**Game repo implements (NOT in scope for this document):**
-- Door/elevator mechanics (FSM, key/door pairing, elevator waypoints)
-- Pickup system (health, ammo, weapons, key items)
+**Game repo implements in Lua scripts (NOT in scope for this document):**
+- Door/elevator mechanics (trivial in Lua via tween callbacks)
+- Pickup system (trivial in Lua via trigger callbacks)
 - Level scripting logic (enemy spawn triggers, secret areas, completion conditions)
-- Game-specific event handlers for `GameEvent(String)` trigger actions
+- All game-specific trigger responses (via Lua callback functions)
 
-The engine delivers generic, reusable systems. The game consumes them to build boomer-shooter-specific behaviors.
+The engine delivers generic, reusable systems with Lua-scriptable APIs. The game consumes them via Lua scripts to build boomer-shooter-specific behaviors.
 
 ---
 
@@ -38,22 +39,41 @@ The engine delivers generic, reusable systems. The game consumes them to build b
 | RON preview tool | `examples/ron_preview.rs` | Standalone hot-reloading scene viewer |
 | Interpolation trait | `rust4d_math` | `Interpolatable` trait with `lerp()` for `f32`, `Vec4`, `Transform4D` |
 | Tween system | `rust4d_game` | `Tween<T>`, `EasingFunction`, `TweenManager` |
+| Tween Lua API | `rust4d_scripting` | `tween:position()`, `tween:on_complete()`, `tween:pause/resume/cancel` |
 | Trigger data model | `rust4d_core` | `TriggerDef`, `TriggerZone`, `TriggerAction`, `TriggerRepeat` (serializable) |
-| Trigger runtime | `rust4d_game` | `TriggerRuntime` processes triggers each frame |
+| Trigger runtime | `rust4d_game` | `TriggerRuntime` processes triggers each frame, invokes Lua callbacks |
+| Trigger Lua API | `rust4d_scripting` | `triggers:register()`, `triggers:on_enter()`, `triggers:on_exit()` |
 
-### Game Responsibility
+### Game Responsibility (Lua Scripts)
 
 | System | What the Game Builds |
 |--------|---------------------|
-| Door mechanics | `Door` component, open/close FSM, key requirement checks, tween triggers |
-| Elevator mechanics | `Elevator` component, waypoint cycling via `TweenManager` |
-| Pickup system | `Pickup` component, pickup effect application, respawn timers |
-| Game event handlers | Interpret `GameEvent(String)` from trigger actions (e.g., "pickup_health_50") |
-| Level scripting | Custom Rust systems for the 20% that declarative triggers cannot handle |
+| Door mechanics | A few lines of Lua: tween position + play sound on trigger callback |
+| Elevator mechanics | Lua script cycling waypoint tweens with on_complete callbacks |
+| Pickup system | Lua trigger callback modifying player state |
+| Level scripting | Lua functions registered as trigger callbacks |
 
-### The GameEvent Escape Hatch
+### The Lua Callback Model (replaces GameEvent escape hatch)
 
-The key design principle: `TriggerAction::GameEvent(String)` is the bridge between engine and game. The engine defines a small set of built-in trigger actions (TweenPosition, DespawnSelf, PlaySound). For anything game-specific (heal player, give ammo, spawn enemies), the trigger fires a named event string and the GAME interprets it. This keeps the engine generic while allowing arbitrary trigger responses.
+The key design principle: `TriggerAction::Callback(String)` is the bridge between engine and game. The engine defines a small set of built-in trigger actions (TweenPosition, DespawnSelf, PlaySound). For anything game-specific (heal player, give ammo, spawn enemies), the trigger fires a **named Lua function** and the game script implements it. This is dramatically simpler and more powerful than the original `GameEvent(String)` pattern:
+
+- **Old approach**: `TriggerAction::GameEvent(String)` fires a named event string. The game implements a Rust event handler that matches on the string and dispatches to handler functions. Awkward, requires Rust compilation, string-based dispatch table.
+- **New approach**: `TriggerAction::Callback(String)` directly calls a Lua function by name. The game defines the function in Lua. No dispatch table, no string matching, no recompilation. A trigger can do anything: heal the player, spawn enemies, play a cutscene, change the W-slice -- all in a few lines of Lua.
+
+**Example -- door trigger in Lua (replaces ~50 lines of Rust):**
+```lua
+function on_door_trigger(trigger, entity)
+  tween:position(door_entity, open_position, 1.5, "ease_in_out_quad")
+  audio:play_spatial("door_open", door_position, "sfx")
+end
+```
+
+**What gets removed:** The `GameEvent(String)` pattern, the game-side event handler pattern (receive `GameEvent(String)`, match on it, dispatch to handler function), and the planned `rust4d_game` code to interpret game event strings. All replaced by direct Lua callbacks.
+
+**What gets simpler:**
+- **Trigger system**: Dramatically simpler. Detect overlap -> call Lua function. No string-to-game-event translation layer.
+- **Door/elevator mechanics**: A few lines of Lua vs a significant Rust module with `Door` struct, `DoorState` enum, FSM logic, `TweenManager` integration.
+- **Pickup system**: A trigger callback that modifies player state. Trivial in Lua.
 
 ---
 
@@ -62,6 +82,7 @@ The key design principle: `TriggerAction::GameEvent(String)` is the bridge betwe
 **Sessions:** 1.0
 **Dependencies:** NONE (can start immediately, zero dependencies on any other phase)
 **Priority:** P0 -- required for basic level geometry
+**Lua impact:** None. Pure geometry code, no Lua bindings needed.
 
 ### Current State
 
@@ -227,7 +248,7 @@ impl Hypersphere4D {
 
 - New shapes produce valid tetrahedra (all indices in range, non-degenerate volumes)
 - Round-trip RON serialization preserves all parameters
-- GPU slicing produces visible geometry at the correct W-slice positions
+- GPU slicing renders new shapes correctly at various W-slices
 - `Hyperprism4D::cube(2.0)` produces identical geometry to `Tesseract4D::new(2.0)`
 - Hypersphere4D at subdivision 2 produces 100-500 tetrahedra (reasonable GPU load)
 
@@ -238,6 +259,7 @@ impl Hypersphere4D {
 **Sessions:** 2.0 (1.0 core + 1.0 enhanced)
 **Dependencies:** Sub-Phase A (shape types), Foundation (serialization)
 **Priority:** P0 -- critical level design feedback loop
+**Lua impact:** None. The preview tool is a standalone Rust binary. No Lua bindings needed.
 
 ### Purpose
 
@@ -372,10 +394,10 @@ This is essentially the same dependency set as the current tech demo binary.
 
 ## 5. Sub-Phase C: Tween/Interpolation System
 
-**Sessions:** 0.5
-**Dependencies:** ECS migration complete, fixed timestep
+**Sessions:** 0.5 (Rust implementation) + 0.15 (Lua bindings) = 0.65 total
+**Dependencies:** ECS migration complete, fixed timestep, `rust4d_scripting` crate (for Lua bindings)
 **Priority:** P1 -- required for doors, elevators, and all moving level geometry
-**Crates:** `rust4d_math` (trait) + `rust4d_game` (system)
+**Crates:** `rust4d_math` (trait) + `rust4d_game` (system) + `rust4d_scripting` (Lua API)
 
 ### Why the Engine Needs This
 
@@ -507,6 +529,32 @@ impl TweenManager {
 }
 ```
 
+### Lua Tween API (~0.15 session)
+
+Registered into the `rust4d_scripting` Lua state as the `tween` table:
+
+- `tween:position(entity, target_vec4, duration, easing?)` -- start a position tween
+- `tween:on_complete(tween_id, callback)` -- call Lua function when tween finishes
+- `tween:pause(id)` / `tween:resume(id)` / `tween:cancel(id)`
+- Easing functions as strings: `"linear"`, `"ease_in_quad"`, `"ease_out_cubic"`, etc.
+
+This enables Lua scripts to drive all moving level geometry without any Rust game code:
+```lua
+-- Elevator cycling between floors
+function elevator_cycle(elevator_entity, floors)
+  local current = 1
+  local function move_next()
+    current = (current % #floors) + 1
+    local id = tween:position(elevator_entity, floors[current], 2.0, "ease_in_out_quad")
+    tween:on_complete(id, function()
+      -- wait 3 seconds, then move to next floor
+      timer:after(3.0, move_next)
+    end)
+  end
+  move_next()
+end
+```
+
 ### Engine vs Game Boundary
 
 | Component | Location | Rationale |
@@ -515,9 +563,9 @@ impl TweenManager {
 | `EasingFunction` enum | `rust4d_game` | Common game pattern, serde for RON triggers |
 | `Tween<T>` struct | `rust4d_game` | Common game pattern |
 | `TweenManager` | `rust4d_game` | Manages entity tweens via ECS |
-| Door logic (open/close FSM) | Game repo | Game-specific behavior |
-| Elevator logic (waypoints, timing) | Game repo | Game-specific behavior |
-| Key/door pairing | Game repo | Game-specific data |
+| Lua tween API | `rust4d_scripting` | Thin wrapper over `TweenManager` |
+| Door logic (tween + sound) | Game Lua scripts | A few lines of Lua |
+| Elevator logic (waypoint cycling) | Game Lua scripts | Lua with tween callbacks |
 
 ### Files Modified
 
@@ -525,6 +573,7 @@ impl TweenManager {
 - `crates/rust4d_math/src/lib.rs` -- export interpolation module
 - `crates/rust4d_game/src/tween.rs` -- NEW: `Tween<T>`, `TweenManager`, `EasingFunction`
 - `crates/rust4d_game/src/lib.rs` -- export tween module
+- `crates/rust4d_scripting/src/tween_api.rs` -- NEW: Lua bindings for tween system
 
 ### Verification Criteria
 
@@ -533,20 +582,24 @@ impl TweenManager {
 - `TweenManager::update()` applies position changes to ECS entities
 - Tween completes after `duration` seconds and returns `TweenState::Completed`
 - Paused tweens do not advance
+- **Lua integration tests:**
+  - Lua script starts a position tween and verifies entity moves
+  - Lua script can create tweens with all easing function types (by string name)
+  - Tween completion callback fires in Lua
 
 ---
 
 ## 6. Sub-Phase D: Declarative Trigger System
 
-**Sessions:** 1.0 (0.5 data model + 0.5 runtime)
-**Dependencies:** Foundation serialization (Wave 2), P1 event system + trigger callbacks (Wave 5)
+**Sessions:** 0.75 (0.5 data model + 0.25 runtime, simplified by removing GameEvent dispatch) + 0.35 (Lua callback + registration bindings) = 1.1 total
+**Dependencies:** Foundation serialization (Wave 2), P1 event system + trigger callbacks (Wave 5), `rust4d_scripting` crate
 **Priority:** P1 -- covers 80% of level scripting needs
 
 ### Context
 
 The collision layer system already has a `TRIGGER` layer and `CollisionFilter::trigger()`, but there are NO callbacks -- the engine can detect trigger overlaps but cannot notify anyone about them. Agent P1 identified that the current trigger system is non-functional due to a bug in symmetric `collides_with()` checks.
 
-Phase 4 provides the *declarative* layer on top of P1's *imperative* trigger detection. P1 fixes the collision bug and provides `drain_collision_events()` with `TriggerEnter`/`TriggerExit` events. P4 defines the RON format for declaring triggers and the runtime that executes trigger actions.
+Phase 4 provides the *declarative* layer on top of P1's *imperative* trigger detection. P1 fixes the collision bug and provides `drain_collision_events()` with `TriggerEnter`/`TriggerExit` events. P4 defines the RON format for declaring triggers and the runtime that executes trigger actions, including calling Lua functions directly.
 
 ### Wave 2: Declarative Trigger Data Model (0.5 session)
 
@@ -577,11 +630,11 @@ Scene(
             repeat: Once,
         ),
         TriggerDef(
-            name: "pickup_health",
+            name: "health_pickup",
             zone: Sphere(center: (10.0, 1.0, 3.0, 0.0), radius: 1.0),
             detects: [Player],
             actions: [
-                GameEvent("pickup_health_large"),
+                Callback("on_health_pickup"),  // calls Lua function on_health_pickup(trigger, entity)
                 DespawnSelf,
             ],
             repeat: Once,
@@ -591,6 +644,8 @@ Scene(
     player_spawn: Some((0.0, 2.0, 5.0, 0.0)),
 )
 ```
+
+Note how the second trigger uses `Callback("on_health_pickup")` instead of the old `GameEvent("pickup_health_large")`. The engine calls the named Lua function directly -- no string event dispatch needed.
 
 #### Trigger System Types
 
@@ -622,8 +677,8 @@ pub enum TriggerAction {
         duration: f32,
         easing: EasingFunction,
     },
-    /// Fire a named game event (game interprets it)
-    GameEvent(String),
+    /// Call a named Lua function (replaces GameEvent)
+    Callback(String),  // Lua function name; called with (trigger_name, triggering_entity)
     /// Despawn the trigger entity itself
     DespawnSelf,
     /// Play a sound (engine-level, requires audio system from P2)
@@ -640,6 +695,8 @@ pub enum TriggerRepeat {
 }
 ```
 
+Note: `TriggerAction::GameEvent(String)` has been **replaced** by `TriggerAction::Callback(String)`. The `Callback` variant calls a named Lua function directly when the trigger fires, passing the trigger name and the triggering entity as arguments. This is far more powerful than string event dispatch -- any trigger action can be arbitrary game logic in Lua.
+
 #### Scene Integration
 
 Add `triggers: Vec<TriggerDef>` field to the `Scene` struct (optional, defaults to empty vec).
@@ -651,8 +708,9 @@ Add `triggers: Vec<TriggerDef>` field to the `Scene` struct (optional, defaults 
 | `TriggerDef` struct | `rust4d_core` (scene data) | Serializable scene data |
 | `TriggerZone` enum | `rust4d_core` | Maps to physics collision shapes |
 | `TriggerAction` enum | `rust4d_core` | Serializable action definitions |
-| Trigger runtime | `rust4d_game` | Processes triggers each frame |
-| Game-specific event handlers | Game repo | Interprets `GameEvent` strings |
+| Trigger runtime | `rust4d_game` | Processes triggers each frame, calls into Lua for `Callback` actions |
+| Lua trigger registration API | `rust4d_scripting` | `triggers:register()`, `triggers:on_enter()`, `triggers:on_exit()` |
+| Game-specific trigger callbacks | Game Lua scripts | Implements the named Lua functions referenced by `Callback` actions |
 
 #### Files Modified (Data Model)
 
@@ -663,13 +721,14 @@ Add `triggers: Vec<TriggerDef>` field to the `Scene` struct (optional, defaults 
 
 #### Verification (Data Model)
 
-- RON round-trip serialization for all trigger types
+- RON round-trip serialization for all trigger types including `Callback`
 - SceneValidator catches invalid entity name references in TriggerAction::TweenPosition
 - Scene with empty triggers field loads correctly (backward compatible)
+- RON scene with `Callback` trigger action loads and validates correctly
 
-### Wave 5: Trigger Runtime (0.5 session)
+### Wave 5: Trigger Runtime + Lua Integration (0.25 session runtime + 0.35 session Lua bindings)
 
-**Prerequisites:** P1 event system and trigger callbacks, Wave 2 (trigger data model), Wave 3 (tween system).
+**Prerequisites:** P1 event system and trigger callbacks, Wave 2 (trigger data model), Wave 3 (tween system), `rust4d_scripting` crate.
 
 #### TriggerRuntime
 
@@ -699,7 +758,7 @@ impl TriggerRuntime {
         collision_events: &[CollisionEvent],
         world: &mut hecs::World,
         tween_manager: &mut TweenManager,
-        event_bus: &mut EventBus,
+        lua_ctx: &LuaContext,  // for invoking Callback actions
     ) { ... }
 }
 ```
@@ -708,31 +767,88 @@ impl TriggerRuntime {
 1. Checks trigger zones against entity positions (via collision events from P1)
 2. When entity enters zone: executes the `TriggerAction` list
 3. `TweenPosition` action: creates a tween via `TweenManager`
-4. `GameEvent` action: fires the named event on the `EventBus`
+4. `Callback` action: calls the named Lua function via `lua_ctx`, passing `(trigger_name, triggering_entity)`
 5. `DespawnSelf` action: marks entity for removal
 6. `PlaySound` action: plays sound via audio system (deferred if P2 audio not ready)
 7. `SetTriggerEnabled` action: enables/disables another trigger by name
 8. Respects `TriggerRepeat` (Once fires once, Cooldown respects timer, Always fires every overlap)
 
-#### Error Handling for Entity References
+Note: The old `GameEvent` action that fired named events on an `EventBus` is gone. The `Callback` action directly invokes Lua functions, which is simpler (no event bus intermediary) and more powerful (arbitrary game logic).
+
+#### Lua Trigger Callback System (~0.25-0.5 session) -- the big change
+
+This is the most significant Lua integration in Phase 4. The engine's `TriggerRuntime` calls into Lua when processing `Callback` actions:
+
+```rust
+// In trigger_runtime.rs, when processing a Callback action:
+TriggerAction::Callback(func_name) => {
+    // Call the registered Lua function by name
+    lua_ctx.call_trigger_callback(func_name, trigger_name, triggering_entity)?;
+}
+```
+
+The Lua side:
+```lua
+-- Game script registers callback functions
+function on_health_pickup(trigger_name, entity)
+  local player = world:get_player()
+  player.health = math.min(player.health + 50, player.max_health)
+  audio:play_oneshot("pickup_health", "sfx")
+  hud:flash(0, 1, 0, 0.3, 0.2)  -- green flash
+end
+
+function on_door_trigger(trigger_name, entity)
+  tween:position(door_entity, open_position, 1.5, "ease_in_out_quad")
+  audio:play_spatial("door_open", door_position, "sfx")
+end
+
+function on_secret_area(trigger_name, entity)
+  hud:draw_text(0.5, 0.3, "A secret is revealed!", { size=24, color={1,1,0,1} })
+  audio:play_oneshot("secret_found", "sfx")
+  stats.secrets_found = stats.secrets_found + 1
+end
+```
+
+#### Lua Trigger Registration API (~0.1 session)
+
+Registered into the `rust4d_scripting` Lua state as the `triggers` table:
+
+- `triggers:register(name, callback_fn)` -- register a Lua function as a trigger callback by name
+- `triggers:on_enter(trigger_name, callback_fn)` -- register callback for a specific trigger's enter event
+- `triggers:on_exit(trigger_name, callback_fn)` -- register exit callback for a specific trigger
+
+This allows both RON-declared callbacks (via `Callback("func_name")` in the action list) and programmatic registration from Lua scripts.
+
+#### Error Handling for Entity References and Lua Callbacks
 
 When a trigger action references an entity by name (e.g., `TweenPosition { target_entity: "secret_door" }`):
 - **At scene load time:** `SceneValidator` validates all entity name references exist
 - **At runtime:** Log warning and skip the action if the entity has been despawned
 
-#### Files Modified (Runtime)
+When a `Callback` action fails:
+- **Missing Lua function:** Log warning, skip the action. Do not crash.
+- **Lua runtime error in callback:** Log the error with line number, continue execution. Never crash the engine.
 
-- `crates/rust4d_game/src/trigger_runtime.rs` -- NEW: trigger execution logic
+#### Files Modified (Runtime + Lua Bindings)
+
+- `crates/rust4d_game/src/trigger_runtime.rs` -- NEW: trigger execution logic with Lua callback invocation
 - `crates/rust4d_game/src/lib.rs` -- export trigger_runtime module
+- `crates/rust4d_scripting/src/trigger_api.rs` -- NEW: Lua trigger registration and callback bindings
 
-#### Verification (Runtime)
+#### Verification (Runtime + Lua Integration)
 
 - Integration test: load scene with triggers, simulate player entering zone, verify actions fire
 - Once triggers only fire once
 - Cooldown triggers respect timer
 - `TweenPosition` correctly creates position tweens for target entities
-- `GameEvent` correctly fires named events on the event bus
+- `Callback` correctly invokes the named Lua function
 - `DespawnSelf` correctly removes the trigger entity
+- **Lua integration tests:**
+  - Lua script registers a trigger callback and it fires on trigger enter
+  - Lua trigger callback can access the triggering entity
+  - `TriggerAction::Callback("my_func")` correctly invokes `my_func` in Lua
+  - Error in Lua trigger callback does not crash engine (logged, execution continues)
+  - Lua `triggers:on_enter()` and `triggers:on_exit()` fire for the correct trigger
 
 ---
 
@@ -745,7 +861,7 @@ A core 4D level design pattern: rooms that exist at different W-coordinates, con
 1. **W-portals** -- Regions where the player transitions from one W-layer to another
    - Implementation: A trigger zone that tweens the player's W-coordinate
    - Just a `TriggerAction::TweenPosition` targeting the player, moving only the W component
-   - Or a special `TriggerAction::ShiftW { delta: f32 }` for clarity (future)
+   - Or a `TriggerAction::Callback("shift_w")` for more complex W-transition logic in Lua
 
 2. **W-visibility ranges** -- Objects only rendered when near the current W-slice
    - Already partially handled by the GPU slicing pipeline (objects far from the W-slice produce no cross-section triangles)
@@ -777,21 +893,27 @@ EntityTemplate(
     material: Material(base_color: (0.4, 0.2, 0.2, 1.0)),
 ),
 
-// A W-portal connecting the two rooms
+// A W-portal connecting the two rooms (using Callback for complex transition logic)
 TriggerDef(
     name: "w_portal_0_to_5",
     zone: AABB(center: (10.0, 1.0, 0.0, 0.5), half_extents: (1.0, 2.0, 1.0, 0.5)),
     detects: [Player],
     actions: [
-        TweenPosition(
-            target_entity: "player",
-            to_w: 5.0,
-            duration: 0.5,
-            easing: EaseInOutQuad,
-        ),
+        Callback("on_w_portal"),  // Lua handles transition effect + tween
     ],
     repeat: Always,
 ),
+```
+
+With the corresponding Lua:
+```lua
+function on_w_portal(trigger_name, entity)
+  -- Smooth W-transition with visual effect
+  local player = world:get_player()
+  tween:position(player, vec4(player.pos.x, player.pos.y, player.pos.z, 5.0), 0.5, "ease_in_out_quad")
+  audio:play_oneshot("portal_whoosh", "sfx")
+  effects:flash(0.2, 0.2, 0.8, 0.5, 0.3)  -- blue flash for W-transition
+end
 ```
 
 ### Entity Prefabs (Future, NOT in Phase 4 scope)
@@ -805,12 +927,26 @@ For larger levels, repeating entity groups becomes painful. A prefab system woul
 | Wave | Sub-Phase | Task | Sessions | Dependencies |
 |------|-----------|------|----------|-------------|
 | Wave 1 | A | Shape type expansion (Hyperprism4D + Hypersphere4D) | 1.0 | **None** (can start immediately) |
-| Wave 2 | D (data) | Declarative trigger data model | 0.5 | Foundation serialization |
-| Wave 3 | C | Tween/interpolation system | 0.5 | ECS, fixed timestep |
+| Wave 2 | D (data) | Declarative trigger data model (with `Callback` action) | 0.5 | Foundation serialization |
+| Wave 3 | C | Tween/interpolation system (Rust) | 0.5 | ECS, fixed timestep |
+| Wave 3+ | C (Lua) | Lua tween API bindings | 0.15 | Wave 3, `rust4d_scripting` |
 | Wave 4a | B (core) | RON preview tool -- core viewer | 1.0 | Wave 1, Foundation |
 | Wave 4b | B (enhanced) | RON preview tool -- enhanced features | 1.0 | Wave 4a |
-| Wave 5 | D (runtime) | Trigger runtime | 0.5 | P1 events, Wave 2, Wave 3 |
-| **Total** | | | **4.5** | |
+| Wave 5 | D (runtime) | Trigger runtime (simplified: no GameEvent dispatch) | 0.25 | P1 events, Wave 2, Wave 3 |
+| Wave 5+ | D (Lua) | Lua trigger callback integration | 0.25-0.5 | Wave 5, `rust4d_scripting` |
+| Wave 5+ | D (Lua) | Lua trigger registration API | 0.1 | Wave 5, `rust4d_scripting` |
+| **Total** | | | **4.75-5.0** | |
+
+**Comparison with original:**
+| | Original | Amended | Delta |
+|--|----------|---------|-------|
+| Sub-Phase A (Shapes) | 1.0 | 1.0 | 0 |
+| Sub-Phase B (Preview) | 2.0 | 2.0 | 0 |
+| Sub-Phase C (Tweens) | 0.5 | 0.65 | +0.15 (Lua bindings) |
+| Sub-Phase D (Triggers) | 1.0 | 1.1 | +0.1 (-0.25 simpler runtime, +0.35 Lua bindings) |
+| **Total** | **4.5** | **4.75-5.0** | **+0.25-0.5** |
+
+The trigger runtime is slightly simpler (no string event dispatch needed) but the Lua callback integration adds new work. Net is roughly neutral, with minor increase from Lua binding effort.
 
 ---
 
@@ -824,13 +960,22 @@ For larger levels, repeating entity groups becomes painful. A prefab system woul
 | Fixed timestep | **Required** | Tween system needs consistent dt for smooth animation |
 | ECS migration complete | **Required** | Trigger system references entities by `hecs::Entity` |
 
+### Dependencies on Scripting Phase
+
+| Scripting Item | P4 Dependency | Why |
+|---------------|---------------|-----|
+| `rust4d_scripting` crate with mlua | **Required** for Lua bindings | Tween and trigger Lua APIs register into the scripting Lua state |
+| Script hot-reload | **Nice to have** | Allows live editing of trigger callbacks during development |
+| Error handling / reporting | **Required** | Lua callback errors must be caught and logged, not crash the engine |
+
 ### Dependencies on P1 (Combat Core)
 
 | P1 Item | P4 Dependency | Why |
 |---------|---------------|-----|
-| Event system | **Required** | Trigger actions fire events; game receives them via EventBus |
 | Trigger zone callbacks | **Required** | Triggers need to know when entities enter/exit zones |
 | Collision bug fix | **Required** | Current symmetric `collides_with()` prevents triggers from detecting players |
+
+Note: P4 no longer depends on the P1 event system / `EventBus` for `GameEvent(String)` dispatch. The `Callback` action calls Lua directly, bypassing the event bus entirely.
 
 ### Dependencies on P2 (Weapons & Feedback)
 
@@ -848,8 +993,9 @@ None. Phase 4 is independent of Phase 3.
 |---------|----------|
 | All shape types (Hyperprism4D, Hypersphere4D) | Editor property panel shows shape parameters |
 | ShapeTemplate variants | Editor creates entities with any shape type |
-| TriggerDef format | Editor visualizes and edits trigger zones as wireframes |
+| TriggerDef format (with `Callback` action) | Editor visualizes and edits trigger zones as wireframes |
 | RON preview tool | Editor may share camera/render code with preview tool viewport |
+| Lua trigger/tween APIs | Editor's Lua console can invoke tweens and trigger registration interactively |
 
 ---
 
@@ -859,10 +1005,14 @@ None. Phase 4 is independent of Phase 3.
 Wave 1 (Shape types) -----> Wave 4a (Preview tool core) --> Wave 4b (Preview enhanced)
                        \
 Foundation (serde) -----> Wave 2 (Trigger data model) --\
-                                                          --> Wave 5 (Trigger runtime)
-ECS + Fixed timestep ---> Wave 3 (Tween system) --------/
-                                                        /
-P1 (Event system) ------------------------------------/
+                                                          --> Wave 5 (Trigger runtime + Lua bindings)
+ECS + Fixed timestep ---> Wave 3 (Tween system) --------/       \
+                            \                           /         \
+                             --> Wave 3+ (Lua tween)--/   Wave 5+ (Lua trigger registration)
+                                                     /
+P1 (Trigger callbacks) ----------------------------/
+                                                  /
+rust4d_scripting (mlua) -------------------------/
 ```
 
 **Key observations:**
@@ -871,8 +1021,9 @@ P1 (Event system) ------------------------------------/
 - **Wave 2** requires Foundation serialization (Rotor4 serde) for RON round-trips
 - **Wave 3** requires ECS and fixed timestep for entity tweens and consistent animation
 - **Wave 4** is the largest single task (2 sessions) and requires Wave 1 + Foundation
-- **Wave 5** is the integration point (trigger runtime) and comes last, needing P1 events + Waves 2 + 3
-- **Critical path:** Foundation -> Wave 2 -> (wait for P1 events + Wave 3) -> Wave 5
+- **Wave 5** is the integration point (trigger runtime + Lua) and comes last, needing P1 trigger callbacks + Waves 2 + 3 + `rust4d_scripting`
+- **Lua binding waves (3+, 5+)** can be done as sub-tasks of their parent waves or as a separate Lua binding pass after the Rust implementation is complete
+- **Critical path:** Foundation -> Wave 2 -> (wait for P1 trigger callbacks + Wave 3 + `rust4d_scripting`) -> Wave 5 + Lua bindings
 
 ### What Can Start Before This Phase
 
@@ -903,16 +1054,25 @@ Wave 1 (shape type expansion) has zero dependencies on any other phase and can b
 - [ ] All easing functions produce 0.0 at t=0 and 1.0 at t=1
 - [ ] `TweenManager::update()` correctly applies position changes to ECS entities
 - [ ] Completed tweens are cleaned up from the manager
+- [ ] **(Lua)** Lua script starts a position tween via `tween:position()` and entity moves correctly
+- [ ] **(Lua)** Lua script can create tweens with all easing types by string name
+- [ ] **(Lua)** Tween completion callback fires in Lua
 
 ### Sub-Phase D (Triggers)
 - [ ] Scene with triggers loads and validates correctly from RON
 - [ ] Empty triggers field backward-compatible with existing scenes
 - [ ] `TweenPosition` action creates tweens for named entities
-- [ ] `GameEvent` action fires events on the event bus
+- [ ] `Callback` action invokes named Lua function with correct arguments
 - [ ] `DespawnSelf` removes the trigger entity
 - [ ] `Once` triggers fire exactly once
 - [ ] `Cooldown(n)` triggers respect the cooldown timer
 - [ ] Invalid entity references logged as warnings, not panics
+- [ ] **(Lua)** Lua script registers a trigger callback and it fires on trigger enter
+- [ ] **(Lua)** Lua trigger callback can access the triggering entity
+- [ ] **(Lua)** `TriggerAction::Callback("my_func")` correctly invokes `my_func` in Lua
+- [ ] **(Lua)** Error in Lua trigger callback does not crash engine (logged, execution continues)
+- [ ] **(Lua)** RON scene with `Callback` trigger action loads and validates correctly
+- [ ] **(Lua)** `triggers:on_enter()` and `triggers:on_exit()` fire for the correct trigger
 
 ---
 
@@ -924,8 +1084,13 @@ Wave 1 (shape type expansion) has zero dependencies on any other phase and can b
 
 ### For Agent P1 (Combat Core)
 - P4 depends on trigger zone callbacks. P4's declarative trigger system is the *declarative* layer on top of P1's *imperative* trigger detection via `drain_collision_events()`.
-- P4 needs the event system to support string-named events for `GameEvent(String)` trigger actions. If P1's `CollisionEvent` is purely typed, the `rust4d_game` EventBus needs an `AnyEvent` or `NamedEvent` variant.
+- P4 no longer needs string-named events or `EventBus` for `GameEvent(String)` -- the `Callback` action calls Lua directly. This simplifies the P1 dependency: P4 only needs collision events, not a general-purpose event system.
 - P1 must fix the trigger detection bug (symmetric `collides_with()` prevents triggers from detecting players).
+
+### For Scripting Phase
+- P4's Lua bindings register into the `rust4d_scripting` Lua state. The scripting phase should be completed before or in parallel with P4's Lua binding sub-tasks (Waves 3+ and 5+).
+- The trigger `Callback` action requires the engine to call Lua functions by name. The scripting crate must support `call_function(name, args)` or equivalent.
+- Error handling is critical: Lua callback errors must be caught and logged, never crash the engine.
 
 ### For Agent P2 (Weapons & Feedback)
 - `TriggerAction::PlaySound` depends on P2's audio system (`rust4d_audio` with kira). This action type can be deferred/stubbed if audio is not ready yet.
@@ -934,6 +1099,7 @@ Wave 1 (shape type expansion) has zero dependencies on any other phase and can b
 - The RON preview tool (Wave 4) shares rendering infrastructure with the editor. The preview tool could become the foundation for the editor's viewport.
 - Shape type expansion (Wave 1) directly feeds the editor's entity creation UI -- editor needs all ShapeTemplate variants.
 - The trigger data model (Wave 2) needs editor visualization (trigger zones drawn as wireframes in the editor viewport).
+- The Lua trigger/tween APIs are accessible from the editor's Lua console for interactive testing.
 
 ---
 
@@ -951,65 +1117,88 @@ Wave 1 (shape type expansion) has zero dependencies on any other phase and can b
 4. **Trigger actions referencing entities by name: what if entity doesn't exist?**
    - Recommendation: Validate at scene load time via `SceneValidator`. At runtime, log warning and skip the action. Never panic.
 
-5. **For P1: Does the event system support string-named events?**
-   - The declarative trigger system assumes `GameEvent(String)` which the game interprets. If P1's event system is typed-only, an `AnyEvent` or `NamedEvent` variant is needed in the `rust4d_game` EventBus.
+5. **Should `TriggerAction::Callback` support inline Lua expressions or only function names?**
+   - Recommendation: Start with function names only (e.g., `Callback("on_door_open")`). Inline Lua in RON would be fragile and hard to debug. Games define callback functions in Lua scripts and reference them by name in RON triggers.
+
+6. **Should `TriggerAction::GameEvent(String)` be kept alongside `Callback` for backward compatibility?**
+   - Recommendation: No. Since this is all new code (not yet implemented), there is no backward compatibility concern. `Callback` is strictly more powerful. Remove `GameEvent` from the design.
 
 ---
 
-## 14. What the Game Repo Builds on Top
+## 14. What the Game Repo Builds on Top (Lua Scripts)
 
-This section is informational -- none of this is engine work, but it shows how the engine systems are consumed.
+This section is informational -- none of this is engine work, but it shows how the engine systems are consumed via Lua scripts.
 
-### Door/Elevator Mechanics (1-2 sessions in game repo)
+### Door/Elevator Mechanics (trivial in Lua)
 
-```rust
-// In Rust4D-Shooter (game repo)
-struct Door {
-    closed_position: Vec4,
-    open_position: Vec4,
-    open_duration: f32,
-    state: DoorState,
-    required_key: Option<KeyColor>,
-}
+```lua
+-- doors.lua
+function on_door_trigger(trigger_name, entity)
+  tween:position(door_entity, open_position, 1.5, "ease_in_out_quad")
+  audio:play_spatial("door_open", door_position, "sfx")
+end
 
-enum DoorState { Closed, Opening, Open(f32), Closing }
+function on_key_door_trigger(trigger_name, entity)
+  if player_inventory.has_key("red") then
+    tween:position(door_entity, open_position, 1.5, "ease_in_out_quad")
+    audio:play_spatial("door_open", door_position, "sfx")
+  else
+    hud:draw_text(0.5, 0.3, "You need the red key!", { size=20, color={1,0,0,1} })
+    audio:play_oneshot("locked_door", "sfx")
+  end
+end
 
-fn door_system(world: &mut World, tweens: &mut TweenManager, events: &EventBus) {
-    for event in events.read::<TriggerEnterEvent>() {
-        if let Some(door) = world.get::<Door>(event.trigger_entity) {
-            tweens.tween_position(
-                event.trigger_entity,
-                door.open_position,
-                door.open_duration,
-                EasingFunction::EaseInOutQuad,
-            );
-        }
-    }
-}
+-- Elevator cycling between floors
+function elevator_start(elevator_entity, floors)
+  local current = 1
+  local function move_next()
+    current = (current % #floors) + 1
+    local id = tween:position(elevator_entity, floors[current], 2.0, "ease_in_out_quad")
+    tween:on_complete(id, function()
+      timer:after(3.0, move_next)
+    end)
+  end
+  move_next()
+end
 ```
 
-### Pickup System (0.5 session in game repo)
+Compare to the old Rust approach which required `Door` struct, `DoorState` enum, FSM logic, event handler matching -- the Lua version is dramatically simpler.
 
-- `Pickup` component with type (health, ammo, weapon, key) and amount
-- Trigger zones with `GameEvent("pickup_health_50")` actions
-- Game event handler applies effect and despawns entity
-- Optional respawn timer
+### Pickup System (trivial in Lua)
 
-### Level Scripting (ongoing in game repo)
+```lua
+-- pickups.lua
+function on_health_pickup(trigger_name, entity)
+  local player = world:get_player()
+  player.health = math.min(player.health + 50, player.max_health)
+  audio:play_oneshot("pickup_health", "sfx")
+  hud:flash(0, 1, 0, 0.3, 0.2)  -- green flash
+end
 
-Declarative triggers handle 80% of needs:
-- Secret doors revealed by wall interaction
-- Trap triggers (ceiling crushing, floor opening)
-- Enemy spawn triggers (player enters area -> spawn wave)
-- W-portal triggers (shift player to different W-layer)
-- Completion triggers (all enemies dead -> open exit)
+function on_ammo_pickup(trigger_name, entity)
+  local player = world:get_player()
+  player.ammo = math.min(player.ammo + 20, player.max_ammo)
+  audio:play_oneshot("pickup_ammo", "sfx")
+end
+```
 
-The remaining 20%: custom Rust code in game-side systems.
+### Level Scripting (Lua callbacks handle everything)
+
+With `TriggerAction::Callback`, declarative triggers handle nearly 100% of level scripting needs:
+- Secret doors revealed by wall interaction -> `Callback("on_secret_reveal")`
+- Trap triggers (ceiling crushing, floor opening) -> `Callback("on_trap_activate")`
+- Enemy spawn triggers (player enters area -> spawn wave) -> `Callback("on_spawn_wave")`
+- W-portal triggers (shift player to different W-layer) -> `Callback("on_w_portal")`
+- Completion triggers (all enemies dead -> open exit) -> `Callback("on_level_complete")`
+
+The remaining edge cases that cannot be expressed declaratively are handled by Lua scripts running custom per-frame logic.
 
 ### Game Repo Effort (NOT counted in engine total)
 
 | Task | Sessions | Dependencies |
 |------|----------|-------------|
-| Door/elevator mechanics | 1-2 | Engine Waves 3+5 |
-| Pickup system | 0.5 | Engine Wave 5 (P1 events) |
-| Level scripting | ongoing | Declarative triggers |
+| Door/elevator Lua scripts | 0.25-0.5 | Engine Waves 3+5 + Lua bindings |
+| Pickup Lua scripts | 0.25 | Engine Wave 5 + Lua bindings |
+| Level scripting | ongoing | Trigger `Callback` + Lua APIs |
+
+Note: Game-side effort is significantly reduced compared to the original Rust approach (was 1.5-2.5 sessions for door/elevator/pickup in Rust, now ~0.5-0.75 in Lua).

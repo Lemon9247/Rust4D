@@ -2,8 +2,10 @@
 
 **Status**: Planning Complete
 **Source**: Agent P5 (Editor & Polish) report from 2026-01-30 engine roadmap swarm
-**Revised Estimate**: 10-12.5 sessions total (8-10 critical path)
-**Prerequisite**: Engine/game split complete, ECS migration done, Phases 1-4 complete
+**Revised Estimate**: 10.85-13.75 sessions total (minimal Lua scoping), up to 11.5-15 sessions (full-featured Lua editor tools). Critical path: 8-10 sessions.
+**Prerequisite**: Engine/game split complete, ECS migration done, Phases 1-4 complete, `rust4d_scripting` crate operational
+
+> **Updated 2026-01-31**: Integrated Lua scripting amendments. This document now includes all Lua binding work, editor script/console panels, and engine-vs-game boundary shifts from the Lua migration. Original Rust implementation details are fully preserved; Lua additions are clearly marked. This document is self-contained and supersedes the separate `lua-phase-amendments.md` for Phase 5.
 
 ---
 
@@ -11,12 +13,16 @@
 
 Phase 5 is the largest and most complex post-split phase in the Rust4D engine roadmap. It encompasses four major sub-systems: texture support, point lights with shadows, input rebinding, and a full egui-based editor framework. The editor has the deepest dependency chain of any feature in the engine -- it is the integration point where ECS, serialization, all shape types, and the working renderer converge into a development tool.
 
+With the Lua migration, Phase 5 also becomes the point where the editor gains **script-aware development tools**: a script error panel, a Lua console for runtime inspection, and Lua bindings for textures, lighting, and input rebinding. These additions are modest in scope but critical for the Lua-driven game workflow.
+
 Agent P5's deep analysis of the rendering pipeline, input system, and 4D slicing architecture revealed several findings that revised the original cross-swarm synthesis estimate upward from 6-10 sessions to 10-12.5 sessions (8-10 on the critical path):
 
 1. **Texture support in 4D is genuinely hard.** The compute shader produces interpolated `Vertex3D` from tetrahedra slicing, and there is no UV coordinate path through the pipeline. This requires careful design.
 2. **The editor's dependency chain is the deepest of any feature.** It needs ECS, serialization, all shape types (P4), a working renderer, and egui (front-loaded from P2 HUD work).
 3. **W-slice navigation thumbnails require off-screen rendering**, adding non-trivial complexity.
 4. **Undo/redo for property editing** adds complexity to the property inspector.
+
+The Lua amendments add +0.85-1.25 sessions (minimal scoping) to +1.35-2.85 sessions (full-featured), primarily from two new editor panels (script error display and Lua console) and thin Lua bindings for input, textures, and lighting.
 
 Despite the deep external dependency chain, the four sub-features of Phase 5 are largely independent of each other internally, enabling significant parallelism.
 
@@ -33,16 +39,45 @@ The editor is **100% engine**. It is a development tool for creating and inspect
 | W-slice navigation widget | `rust4d_editor` | 4D-specific visualization tool |
 | 3D viewport | `rust4d_editor` (reuses `rust4d_render`) | Renders via existing pipeline |
 | Scene save/load | `rust4d_editor` (uses `rust4d_core` scene API) | Generic engine capability |
-| Pause menu | **Game repo** | Game-specific UI |
-| Gameplay-specific editors (weapon tuning, enemy config) | **Game repo** | Game-specific tools |
+| Script error panel + Lua console | `rust4d_editor` | Script-aware development tools (Lua) |
+| Lua input/texture/lighting bindings | `rust4d_scripting` | Expose engine APIs to Lua scripts |
+| Pause menu | **Game repo (Lua scripts)** | Game-specific UI, built with HUD API |
+| Gameplay-specific editors (weapon tuning, enemy config) | **Not needed** -- game config is Lua data files, editable as text | Replaced by script editing + Lua console |
 
 **Integration model**: The editor is opt-in via the `EditorHost` trait. Games toggle the editor overlay with F12. Production builds can simply not depend on `rust4d_editor`. The editor never takes over the game's event loop -- it provides a composable overlay rendered on top of the game viewport.
 
-**Input rebinding**: 80% is already planned by the split plan's action/axis abstraction (`InputAction` enum, `InputMap` struct, `default_input_map()`). Phase 5 adds persistence (`to_toml()` / `from_toml()`) and runtime modification (`rebind()`, `unbind()`, `conflicts()`).
+**Input rebinding**: 80% is already planned by the split plan's action/axis abstraction (`InputAction` enum, `InputMap` struct, `default_input_map()`). Phase 5 adds persistence (`to_toml()` / `from_toml()`) and runtime modification (`rebind()`, `unbind()`, `conflicts()`). With Lua, the game calls these through `input:bind()`, `input:save()`, etc. -- the engine API is the same, just Lua-accessible.
+
+### Lua Boundary Shift: What Was Game-Side Rust Now Needs Lua Bindings or Editor Features
+
+| Was (Rust game code) | Becomes (Engine Lua binding / Editor feature) |
+|---------------------|----------------------------------------------|
+| `InputMap::rebind()` called from Rust settings screen | `input:rebind(action, key)` from Lua settings script |
+| `InputMap::to_toml()` / `from_toml()` called from Rust | `input:save(path)` / `input:load(path)` from Lua |
+| `InputMap::conflicts()` checked in Rust | `input:conflicts()` returns table of conflicts to Lua |
+| Game-specific editor panels in Rust | **Not needed** -- game config is Lua data files, editable as text |
+| No script editing needed | **Editor needs script error panel** (new feature) |
+| No runtime console needed | **Editor needs Lua console** (new feature) |
+| Game sets material textures in Rust | `entity:set_material({ texture="stone_wall", ... })` from Lua |
+| Game creates lights as ECS entities in Rust | `entity:add_light({ color={1,0.9,0.7}, intensity=2.0, ... })` from Lua |
+
+### What Gets Simpler with Lua
+
+- **Input rebinding UI**: In the Rust approach, the game needed to build a full settings screen in Rust (complex UI code). With Lua + the HUD API, a simple Lua script can build a rebinding screen. Even simpler: the game could use a TOML config file for bindings and not have an in-game UI at all (common for indie games).
+
+- **Game-specific editor panels are unnecessary**: The Rust approach planned for games to extend the editor with custom panels (weapon tuning, AI config). With Lua, game configuration is data files (Lua tables or TOML). The editor's script editing panel + Lua console replaces the need for bespoke property editors. Tweaking enemy health is just editing a Lua file, not building a custom editor panel.
+
+- **Pause menu**: Was planned as game-side Rust using egui. With Lua + HUD API, it is a simple Lua script.
+
+### What Gets Removed or Reduced
+
+- **Game-side editor extension API importance reduced**: The `EditorHost` trait's purpose of letting games add custom panels becomes less important. Games customize through Lua scripts, not Rust editor extensions. The `EditorHost` trait still exists for engine-level editor integration, but game-specific panels are unnecessary.
+
+- **Complex input rebinding UI infrastructure**: The engine just provides the API (`input:rebind`, `input:save`, etc.). The game builds whatever UI it wants in Lua. No need for the engine to provide a polished rebinding widget.
 
 ---
 
-## Sub-Phase A: Texture Support (1.5-2.5 sessions)
+## Sub-Phase A: Texture Support (1.5-2.5 sessions + 0.1 session Lua bindings)
 
 ### The Problem: No UV Path in the Pipeline
 
@@ -123,13 +158,24 @@ Dependency: The `image` crate for loading PNG/JPG (standard Rust image loading, 
 
 The `Material` component gains a `texture: Option<TextureHandle>` field. Materials without textures continue to use vertex color. The render pipeline supports per-draw-call texture binding.
 
+### Lua Texture/Material API (+0.1 session)
+
+Thin Lua wrappers over the existing `TextureManager` and `Material` system:
+
+- `textures:load(name, path)` -- load a texture by name (string key for Lua-friendly access)
+- `entity:set_material({ texture="stone_wall", color={0.8, 0.8, 0.8, 1.0} })` -- set material on entity
+- `entity:get_material()` -- returns material table with current texture name and color
+
+This is minimal work because the `TextureManager` already handles loading and GPU resource management. The Lua layer is a thin name-to-handle mapping plus ECS component setters.
+
 ### Task Breakdown
 
 | Task | Sessions | Notes |
 |------|----------|-------|
 | 5.3: Triplanar mapping + texture loading | 1 | Shader changes + TextureManager + image loading |
 | 5.4: Per-material texture + UV path (deferrable) | 0.5-1.5 | Modify Vertex4D (32->40 bytes), Vertex3D, compute shader UV interpolation |
-| **Sub-Phase A Total** | **1.5-2.5** | UV path deferred if triplanar is sufficient |
+| 5.3L: Lua texture/material API | 0.1 | `textures:load()`, `entity:set_material()` wrappers |
+| **Sub-Phase A Total** | **1.6-2.6** | UV path deferred if triplanar is sufficient |
 
 ### Risk: Texture Quality
 
@@ -137,7 +183,7 @@ Triplanar mapping produces visible seams at certain angles and can look blurry o
 
 ---
 
-## Sub-Phase B: Lighting System (2 sessions)
+## Sub-Phase B: Lighting System (2 sessions + 0.1 session Lua bindings)
 
 ### Current Lighting State
 
@@ -294,13 +340,24 @@ This is a contained change to `render_pipeline.rs` and `render.wgsl`. It does no
 - The existing `ensure_depth_texture` pattern in `render_pipeline.rs` shows exactly how to manage additional render targets
 - Only for the directional light (point light shadows are much harder and not needed for the boomer shooter)
 
+### Lua Lighting API (+0.1 session)
+
+Thin Lua wrappers over the `PointLight4D` ECS component:
+
+- `entity:add_light({ color={1,0.9,0.7}, intensity=2.0, range=15, w_range=3 })` -- add point light component to an entity
+- `entity:set_light({ intensity=3.0 })` -- modify light properties on an existing entity
+- `entity:remove_light()` -- remove point light component
+
+Since `PointLight4D` is already an ECS component, the Lua layer just needs to add/modify/remove it. This is standard ECS component manipulation that the `rust4d_scripting` crate's entity API likely already supports generically; the lighting API provides typed convenience wrappers.
+
 ### Task Breakdown
 
 | Task | Sessions | Notes |
 |------|----------|-------|
 | 5.1: Point lights | 1 | Component, GPU types, shader, light collection, W-attenuation |
 | 5.2: Basic shadows | 1 | ShadowPipeline, depth texture, shadow sampling, PCF |
-| **Sub-Phase B Total** | **2** | |
+| 5.1L: Lua lighting API | 0.1 | `entity:add_light()`, `entity:set_light()` wrappers |
+| **Sub-Phase B Total** | **2.1** | |
 
 ### Risk: Point Light Performance
 
@@ -312,7 +369,7 @@ With 16-32 point lights computed per fragment in a forward renderer, performance
 
 ---
 
-## Sub-Phase C: Input Rebinding (0.5 sessions)
+## Sub-Phase C: Input Rebinding (0.5 sessions + 0.15 session Lua bindings)
 
 ### Foundation Already Planned
 
@@ -361,19 +418,33 @@ pub enum PhysicalInput {
 }
 ```
 
-### Game-Side Responsibilities
+### Game-Side Responsibilities (Now Lua)
 
-The game repo provides:
-- **Rebinding UI**: A settings screen where the player clicks an action, then presses the desired key. This is game UI, not engine.
-- **Persistence**: Save/load the `InputMap` to a config file. The engine provides `to_toml()` / `from_toml()`, the game decides where the file goes.
-- **Pause menu**: Game-owned overlay using the engine's scene stack or a simple state flag.
+With Lua scripting, the game repo provides these as **Lua scripts** rather than compiled Rust:
+- **Rebinding UI**: A Lua script using the HUD API to build a settings screen where the player clicks an action, then presses the desired key. Much simpler than building this in Rust.
+- **Persistence**: Lua calls `input:save()` / `input:load()` which internally use `to_toml()` / `from_toml()`. The game decides when to save/load.
+- **Pause menu**: A Lua script using the HUD API -- trivially simple compared to the Rust approach.
+
+### Lua Input Rebinding API (+0.15 session)
+
+- `input:bind(action_name, key_name)` -- bind an action to a physical input
+- `input:unbind(action_name)` -- remove a binding
+- `input:conflicts()` -- returns table of conflicting bindings
+- `input:save(path?)` -- save input map to TOML file
+- `input:load(path?)` -- load input map from TOML file
+- `input:reset()` -- reset to defaults
+- `input:get_binding(action_name)` -- get current binding for an action
+- `input:define_action("custom_action")` -- useful for game-specific actions beyond the engine defaults
+
+These are thin wrappers over the existing `InputMap` methods. Action and key names are strings in Lua, mapped to the Rust enums internally.
 
 ### Task Breakdown
 
 | Task | Sessions | Notes |
 |------|----------|-------|
 | 5.5: Input rebinding API + TOML persistence | 0.5 | `rebind()`, `unbind()`, `conflicts()`, `to_toml()`, `from_toml()`, `reset_defaults()` + tests |
-| **Sub-Phase C Total** | **0.5** | |
+| 5.5L: Lua input rebinding API | 0.15 | `input:bind()`, `input:save()`, `input:load()`, etc. |
+| **Sub-Phase C Total** | **0.65** | |
 
 ---
 
@@ -393,6 +464,8 @@ crates/rust4d_editor/
       w_slice_nav.rs    # W-slice slider + multi-slice preview thumbnails
       viewport.rs       # 3D viewport (wraps existing render pipeline)
       scene_panel.rs    # Scene save/load, scene tree
+      script_panel.rs   # Script error display (Lua integration)
+      lua_console.rs    # Lua REPL console (Lua integration)
     state.rs            # Editor state (selected entity, gizmo mode, etc.)
     integration.rs      # EditorIntegration trait -- how the editor plugs into a game's main loop
 ```
@@ -408,6 +481,7 @@ egui_dock = "0.14"              # Dockable panel layout
 rust4d_core.workspace = true
 rust4d_render.workspace = true
 rust4d_math.workspace = true
+rust4d_scripting.workspace = true  # For Lua console and script error reporting
 ```
 
 These are well-maintained, widely-used crates. egui-wgpu works directly with the wgpu version Rust4D already uses (wgpu 24).
@@ -439,8 +513,14 @@ pub trait EditorHost {
     /// Scene file operations
     fn save_scene(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>>;
     fn load_scene(&mut self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Provide the Lua runtime for console and script error reporting (Lua integration)
+    fn lua_runtime(&self) -> Option<&LuaRuntime>;
+    fn lua_runtime_mut(&mut self) -> Option<&mut LuaRuntime>;
 }
 ```
+
+Note: The `lua_runtime()` methods return `Option` so hosts without Lua (pure engine tests, minimal examples) can return `None` and the editor gracefully hides the script/console panels.
 
 ### EditorApp API
 
@@ -524,21 +604,65 @@ Based on the boomer shooter's needs:
 14. New scene
 15. Undo/redo (basic command pattern -- at least for transform changes)
 
+**Wave 5: Lua Development Tools (0.5-2.5 sessions, see below)**
+16. Script error panel
+17. Lua console panel
+
+### Editor: Script Error / Editing Panel (0.25-1.5 sessions)
+
+This is a new editor panel driven by the Lua migration. There are two scoping options:
+
+**Minimal approach (recommended for MVE): Error log panel (~0.25 session)**
+- Displays Lua script errors with file name and line number
+- Errors reported by the `rust4d_scripting` crate's error handler
+- Clickable errors (could copy file:line to clipboard for external editor)
+- Clears on successful hot-reload
+- Relies on external editors (VS Code with Lua plugin) for actual script editing
+
+**Full-featured approach (Phase 6 territory): Script editing panel (~1.0-1.5 sessions)**
+- Text editor panel in the editor for viewing and editing Lua scripts
+- Syntax highlighting for Lua (egui text editor with highlighting, or integrate a simple highlighter)
+- File tree showing the game's script directory
+- Save button (writes to disk)
+- Error display: when a Lua script has an error, show the error message with line number in the panel
+- Hot-reload button: trigger script reload from the editor (or automatic on save)
+
+**Recommendation**: Start with the error log panel for MVE. The full script editor is a nice-to-have that can come later -- most developers will use VS Code or their preferred editor for Lua scripts anyway.
+
+### Editor: Lua Console Panel (0.25-1.0 session)
+
+REPL-style console in the editor for runtime Lua evaluation. This is extremely valuable for debugging and iteration -- modify game state at runtime without editing files.
+
+**Minimal approach (recommended for MVE): Basic console (~0.25 session)**
+- Text input field + scrollable output log
+- `eval(lua_string)` execution against the running Lua state
+- Print results and errors to the output log
+- Command history (up/down arrow)
+
+**Full-featured approach (Phase 6 territory): Rich console (~0.5-1.0 session)**
+- Auto-complete for common API names (e.g., `world:`, `audio:`, `input:`)
+- Syntax highlighting in the input field
+- Persistent command history across sessions
+- Helper commands: `:entities` (list all), `:inspect <id>` (show components), etc.
+
+**Recommendation**: Start with the basic console. Even without auto-complete, a Lua REPL in the editor is immensely useful for debugging. Type `world:query_sphere(player_pos, 10)` and immediately see nearby entities.
+
 ### RON Preview Tool as Foundation
 
 Agent P4 (Level Design Pipeline) noted that the RON preview tool (`examples/ron_preview.rs`, their Wave 4) could serve as the foundation for the editor's viewport. Sharing camera/render code avoids duplication. The editor viewport wraps the existing render pipeline.
 
 ### What the Game Builds On Top
 
-The game repo can:
-- Use the editor during development by enabling `rust4d_editor` as a dev-dependency
-- Build a custom editor tool that extends the engine editor (add panels for weapon config, enemy AI, etc.)
-- Ship without the editor entirely (no egui in release builds)
+With Lua scripting, the game repo:
+- Uses the editor during development by enabling `rust4d_editor` as a dev-dependency
+- Edits game configuration (enemy stats, weapon balance, etc.) directly as Lua data files -- no custom editor panels needed
+- Uses the Lua console for runtime debugging and iteration
+- Ships without the editor entirely (no egui in release builds)
 
-The game repo owns:
-- Pause menu (using egui or a separate UI system -- game UI, not editor UI)
-- In-game HUD (covered by Phase 2 of the roadmap)
-- Game-specific property inspectors (`Health`, `Weapon`, `AIState` components)
+The game repo owns (as Lua scripts):
+- Pause menu (using the HUD API -- simple Lua script)
+- In-game HUD (using the HUD API from Phase 2)
+- Game logic (AI, weapons, pickups, doors -- all Lua)
 
 ### Task Breakdown
 
@@ -548,7 +672,9 @@ The game repo owns:
 | 5.7: Entity list + property inspector | 2 | Entity list, hierarchy, selection, Transform4D/Material/ShapeRef editing, add/delete, undo/redo |
 | 5.8: W-slice navigation | 1-2 | Slider, W-position display, multi-slice thumbnails (off-screen rendering) |
 | 5.9: Scene operations | 1 | RON save/load, new scene, scene tree panel, file dialog |
-| **Sub-Phase D Total** | **6-8** | |
+| 5.10: Script error panel (minimal) | 0.25 | Error log display with file:line, clear on reload |
+| 5.11: Lua console panel (minimal) | 0.25 | Text input + output log, eval execution, command history |
+| **Sub-Phase D Total** | **6.5-8.5** | Minimal Lua editor tools; full-featured adds +1.0-2.0 |
 
 ---
 
@@ -561,28 +687,41 @@ The game repo owns:
 | 5.3 Triplanar textures | 1 | Wave 1 | TextureManager, triplanar shader, image loading |
 | 5.4 UV path (deferrable) | 0.5-1 | Wave 1 (after 5.3) | Vertex4D/Vertex3D UV fields, compute shader changes |
 | 5.5 Input rebinding API | 0.5 | Wave 1 | rebind(), TOML persistence, conflict detection |
+| 5.1L Lua lighting API | 0.1 | Wave 1 (after 5.1) | `entity:add_light()`, `entity:set_light()` |
+| 5.3L Lua texture/material API | 0.1 | Wave 1 (after 5.3) | `textures:load()`, `entity:set_material()` |
+| 5.5L Lua input rebinding API | 0.15 | Wave 1 (after 5.5) | `input:bind()`, `input:save()`, `input:load()` |
 | 5.6 Editor framework | 2 | Wave 2 | Crate, egui integration, EditorHost, panel layout |
 | 5.7 Entity list + inspector | 2 | Wave 2 (after 5.6) | Entity editing, hierarchy, selection, undo/redo |
 | 5.8 W-slice navigation | 1-2 | Wave 2 (after 5.6) | Slider, thumbnails with off-screen rendering |
 | 5.9 Scene operations | 1 | Wave 2 (after 5.6) | RON save/load, new scene, scene tree |
-| **Total** | **10-12.5** | | |
+| 5.10 Script error panel | 0.25 | Wave 2 (after 5.6) | Error log with file:line display |
+| 5.11 Lua console panel | 0.25 | Wave 2 (after 5.6) | Basic REPL: text input + output log |
+| **Total (minimal Lua)** | **10.85-13.35** | | |
+| **Total (full Lua editor)** | **11.85-15.35** | | +1.0-2.0 for full script editor + rich console |
 
 ### Critical Path Analysis
 
 With maximum parallelism (Wave 1 and Wave 2 overlapping where possible):
-- **Wave 1 critical path**: 2.5-3 sessions (lights + shadows + textures, all in parallel with input rebinding)
-- **Wave 2 critical path**: 6-7 sessions (editor framework, then entity editing + W-nav + scene ops)
-- **Total critical path**: 8-10 sessions
-- **If Wave 1 and Wave 2 run in parallel agents**: ~7-8 sessions wall time
+- **Wave 1 critical path**: 2.5-3.1 sessions (lights + shadows + textures + Lua bindings, all in parallel with input rebinding)
+- **Wave 2 critical path**: 6.5-7.5 sessions (editor framework, then entity editing + W-nav + scene ops + Lua panels)
+- **Total critical path**: 8.5-10.5 sessions
+- **If Wave 1 and Wave 2 run in parallel agents**: ~7-8.5 sessions wall time
 
-### Comparison to Original Synthesis Estimate
+### Comparison to Original Estimates
 
-The cross-swarm synthesis estimated 6-10 sessions. The detailed breakdown yields 10-12.5 sessions total (8-10 critical path). The increase comes from:
-1. Texture support being harder than "1 session" when accounting for the 4D UV problem
-2. W-slice navigation thumbnails requiring off-screen rendering (non-trivial)
-3. Undo/redo adding complexity to the property inspector
+| Version | Total Sessions | Critical Path |
+|---------|---------------|---------------|
+| Original cross-swarm synthesis | 6-10 | -- |
+| Pre-Lua detailed breakdown | 10-12.5 | 8-10 |
+| **Post-Lua (minimal scoping)** | **10.85-13.75** | **8.5-10.5** |
+| Post-Lua (full-featured) | 11.85-15.35 | 9-11 |
 
-If Task 5.4 (UV path) is deferred and Task 5.8 (W-slice nav) is simplified (without thumbnails), it fits in 8-9 sessions, closer to the upper bound of the synthesis estimate.
+The Lua additions (minimal) add +0.85-1.25 sessions over the pre-Lua detailed breakdown. The increase comes from:
+1. Three thin Lua binding tasks (+0.35 total): lighting, textures, input
+2. Script error panel (+0.25): display Lua errors in the editor
+3. Lua console panel (+0.25): basic REPL for runtime debugging
+
+If Task 5.4 (UV path) is deferred, Task 5.8 (W-slice nav) is simplified (without thumbnails), and Lua editor panels are kept minimal, the total fits in 9-10 sessions.
 
 ---
 
@@ -593,11 +732,12 @@ Phase 5 has the deepest dependency chain of any phase:
 ```
 Split Plan (ECS + rust4d_game + Input refactor + Scene pluggable)
   -> Foundation (serialization, fixed timestep)
-    -> Phase 1 (raycasting, events)
-      -> Phase 2 (audio, HUD, particles)
-        -> Phase 3 (sprites, AI)
-          -> Phase 4 (level tools, shapes)
-            -> Phase 5 (EDITOR, lights, textures, rebinding)  <-- HERE
+    -> Scripting Phase (rust4d_scripting crate with mlua, hot-reload)
+      -> Phase 1 (raycasting, events)
+        -> Phase 2 (audio, HUD, particles)
+          -> Phase 3 (sprites, AI)
+            -> Phase 4 (level tools, shapes)
+              -> Phase 5 (EDITOR, lights, textures, rebinding)  <-- HERE
 ```
 
 ### Hard Dependencies (must be complete)
@@ -608,6 +748,7 @@ Split Plan (ECS + rust4d_game + Input refactor + Scene pluggable)
 | Serialization (Rotor4 Serialize/Deserialize) | Foundation | Editor save/load, scene round-tripping |
 | rust4d_game crate exists | Split Plan Phase 2 | Editor is separate from game framework |
 | Input action/axis abstraction | Split Plan Phase 2 | Input rebinding builds on InputMap |
+| `rust4d_scripting` crate operational | Scripting Phase | Lua console, script error reporting, all Lua bindings |
 | All shape types (P4) | Phase 4 | Editor must display/create all shapes |
 | Event system (P1) | Phase 1 | Editor undo/redo uses events |
 | Scene save/load works with ECS | Split Plan Phase 3 | Editor save/load |
@@ -621,6 +762,7 @@ Split Plan (ECS + rust4d_game + Input refactor + Scene pluggable)
 | Sprite billboard rendering (P3) | Phase 3 | Editor could show sprite previews, but not MVE |
 | Raycasting (P1) | Phase 1 | Viewport entity picking (click to select). Can use bounding box checks as fallback. |
 | HUD system (P2) | Phase 2 | Editor overlays use egui, not HUD system. Separate. |
+| P1-P4 Lua bindings | Phases 1-4 | Lua console is more useful when all APIs are bound, but console works with whatever bindings exist |
 
 ### Cross-Phase Coordination Notes
 
@@ -629,6 +771,7 @@ From the hive-mind file:
 - **Agent P4 (Level Design)**: The RON preview tool could serve as the foundation for the editor's viewport.
 - **Agent P2 (Weapons & Feedback)**: Point lights add bind group 1 to the main render pipeline. HUD/sprite passes use separate pipelines, no conflict.
 - **Render pass ordering confirmed** across P2, P3, P5: geometry -> sprites -> particles -> HUD -> egui editor (last).
+- **Scripting Phase**: The `rust4d_scripting` crate must be operational before P5 Lua binding work and editor Lua panels. Bindings from P1-P4 are registered into the same Lua state.
 
 ---
 
@@ -638,12 +781,13 @@ From the hive-mind file:
 
 ```
 Phase 5 Wave 1 (Parallel - can all start simultaneously)
-  Agent A: Point lights + shadows (render pipeline changes)
-  Agent B: Texture support (shader + texture loading)
-  Agent C: Input rebinding API (rust4d_input changes)
+  Agent A: Point lights + shadows + Lua lighting API (render pipeline changes)
+  Agent B: Texture support + Lua texture API (shader + texture loading)
+  Agent C: Input rebinding API + Lua input API (rust4d_input changes)
 
 Phase 5 Wave 2 (Sequential - needs Wave 1 render changes)
   Agent D: Editor framework + entity editing + W-slice nav + scene operations
+           + script error panel + Lua console
            (needs lights working for viewport to look decent)
 ```
 
@@ -653,8 +797,10 @@ The editor (Wave 2) benefits from lights and textures being available, but could
 
 ```
 5.1 Point lights ──> 5.2 Basic shadows (needs light bind group)
+                 ──> 5.1L Lua lighting API (needs PointLight4D component)
 5.3 Triplanar textures ──> 5.4 UV path (if needed)
-5.5 Input rebinding (independent)
+                       ──> 5.3L Lua texture/material API (needs TextureManager)
+5.5 Input rebinding ──> 5.5L Lua input API (needs InputMap methods)
 ```
 
 ### Wave 2 Internal Dependencies
@@ -663,7 +809,9 @@ The editor (Wave 2) benefits from lights and textures being available, but could
 5.6 Editor framework ──> 5.7 Entity list + inspector
                      ──> 5.8 W-slice navigation
                      ──> 5.9 Scene operations
-(5.7, 5.8, 5.9 can run in parallel after 5.6)
+                     ──> 5.10 Script error panel
+                     ──> 5.11 Lua console panel
+(5.7, 5.8, 5.9, 5.10, 5.11 can run in parallel after 5.6)
 ```
 
 ---
@@ -676,6 +824,11 @@ The editor (Wave 2) benefits from lights and textures being available, but could
 - [ ] `TextureManager` creates GPU textures and views correctly
 - [ ] Per-material texture assignment works (materials with and without textures render correctly)
 - [ ] Triplanar sampling in shader produces visually acceptable results on architectural geometry
+
+**Lua integration tests:**
+- [ ] Lua script calls `textures:load("stone", "assets/stone.png")` and texture is available
+- [ ] Lua script calls `entity:set_material({ texture="stone" })` and entity renders with texture
+- [ ] Invalid texture name in Lua produces error (not crash)
 
 ### Sub-Phase B: Lighting
 - [ ] `PointLight4D` component can be added to ECS entities
@@ -690,6 +843,11 @@ The editor (Wave 2) benefits from lights and textures being available, but could
 - [ ] PCF produces soft shadow edges
 - [ ] Objects not in current W-slice do not cast visible shadows (correct by construction)
 
+**Lua integration tests:**
+- [ ] Lua script calls `entity:add_light({ color={1,0.9,0.7}, intensity=2.0, range=15, w_range=3 })` and light appears
+- [ ] Lua script calls `entity:set_light({ intensity=3.0 })` and light intensity changes
+- [ ] Lua script removes light component and light disappears
+
 ### Sub-Phase C: Input Rebinding
 - [ ] `InputMap::rebind()` correctly reassigns actions to new physical inputs
 - [ ] `InputMap::unbind()` removes bindings
@@ -697,6 +855,13 @@ The editor (Wave 2) benefits from lights and textures being available, but could
 - [ ] `InputMap::to_toml()` serializes the full input map
 - [ ] `InputMap::from_toml()` deserializes and round-trips correctly
 - [ ] `InputMap::reset_defaults()` restores the default input map
+
+**Lua integration tests:**
+- [ ] Lua script calls `input:bind("jump", "space")` and binding takes effect
+- [ ] Lua script calls `input:save()` and TOML file is written
+- [ ] Lua script calls `input:load()` and bindings are restored
+- [ ] `input:conflicts()` returns correct conflict table to Lua
+- [ ] `input:get_binding("jump")` returns current binding string
 
 ### Sub-Phase D: Editor
 - [ ] `rust4d_editor` crate compiles with egui + egui-wgpu + egui-winit
@@ -715,13 +880,22 @@ The editor (Wave 2) benefits from lights and textures being available, but could
 - [ ] New scene clears the world
 - [ ] Undo/redo works for at least transform property changes
 
+**Lua editor panel tests:**
+- [ ] Script error in Lua displays in editor error panel with file name and line number
+- [ ] Error panel clears on successful hot-reload
+- [ ] Lua console evaluates expressions and returns results
+- [ ] Lua console can inspect entity properties at runtime (e.g., `world:query_sphere(...)`)
+- [ ] Lua console error messages are displayed (not swallowed)
+- [ ] Editor gracefully hides Lua panels when `EditorHost::lua_runtime()` returns `None`
+- [ ] Hot-reload of Lua scripts reflects in editor immediately
+
 ---
 
 ## Risk Assessment
 
 ### High Risk: Editor Scope Creep
-The editor is the single largest feature. The temptation to add "just one more panel" is enormous.
-**Mitigation**: Define MVE (Minimum Viable Editor) clearly and stick to it. Ship entity list + property inspector + W-slice slider first. Multi-slice thumbnails and gizmos are Phase 2 of the editor, not Phase 1. No spatial gizmos (transform handles in viewport) in MVE -- too complex for the benefit.
+The editor is the single largest feature. The temptation to add "just one more panel" is enormous. **With Lua, the risk increases** -- the script editor and console are genuinely useful features that could expand endlessly.
+**Mitigation**: Define MVE (Minimum Viable Editor) clearly and stick to it. Ship entity list + property inspector + W-slice slider + error log + basic console first. Full syntax-highlighted script editor and auto-completing REPL are Phase 6 territory. No spatial gizmos (transform handles in viewport) in MVE -- too complex for the benefit.
 
 ### Medium Risk: egui + wgpu Integration
 egui-wgpu is well-maintained but version mismatches between egui, egui-wgpu, and wgpu can cause frustrating compile errors.
@@ -730,6 +904,10 @@ egui-wgpu is well-maintained but version mismatches between egui, egui-wgpu, and
 ### Medium Risk: Texture UV Quality
 Triplanar mapping produces visible seams at certain angles and can look blurry on surfaces not aligned with major axes.
 **Mitigation**: Start with triplanar, evaluate quality. If insufficient, Task 5.4 (UV path) is the fallback. For sprite billboards (enemy rendering from P3), UVs are straightforward since sprites are flat quads.
+
+### Low Risk: Lua Console Security
+The Lua console gives full access to engine APIs at runtime. This is a development tool, not shipping in production builds.
+**Mitigation**: The editor (and console) only exist in dev builds. Production builds do not depend on `rust4d_editor`. The console executes in the same sandbox as regular game scripts -- no additional attack surface.
 
 ### Low Risk: Point Light Performance
 With 16-32 point lights computed per fragment in a forward renderer, performance could degrade in scenes with many lights.
@@ -753,16 +931,22 @@ Single directional shadow map is basic but sufficient for a boomer shooter. 4D-s
 | Input rebinding API | `rust4d_input` | `InputMap::rebind()`, TOML persistence |
 | Scene editor with entity editing | `rust4d_editor` | `EditorApp`, `EditorHost` trait |
 | W-slice navigation widget | `rust4d_editor` | Integrated in editor UI |
+| Script error panel | `rust4d_editor` | Lua error display with file:line |
+| Lua console panel | `rust4d_editor` | Runtime REPL for debugging |
+| Lua lighting API | `rust4d_scripting` | `entity:add_light()`, `entity:set_light()` |
+| Lua texture/material API | `rust4d_scripting` | `textures:load()`, `entity:set_material()` |
+| Lua input rebinding API | `rust4d_scripting` | `input:bind()`, `input:save()`, `input:load()` |
 
-### What the Game Builds Using These APIs
+### What the Game Builds Using These APIs (via Lua)
 
 | Feature | Implementation |
 |---------|---------------|
-| Pause menu | Game UI using egui or custom system |
-| Settings screen with key rebinding | Game UI calling `InputMap::rebind()` |
-| Custom editor panels (weapon tuning, AI config) | Game-side panels implementing editor extension API |
-| Game-specific textures | Loaded via `TextureManager`, assigned to Materials |
-| Level-specific lighting | Placed as entities with `PointLight4D` components in scenes |
+| Pause menu | Lua script using HUD API |
+| Settings screen with key rebinding | Lua script calling `input:bind()`, `input:save()` |
+| Game-specific textures | Loaded via `textures:load()` in Lua, assigned to materials |
+| Level-specific lighting | Placed as entities with `entity:add_light()` in Lua or in RON scene files |
+| Game configuration tweaking | Edit Lua data files directly -- no custom editor panels needed |
+| Runtime debugging | Lua console in the editor |
 
 ### Files Modified/Created
 
@@ -777,6 +961,8 @@ Single directional shadow map is basic but sufficient for a boomer shooter. 4D-s
 - `crates/rust4d_editor/src/panels/w_slice_nav.rs`
 - `crates/rust4d_editor/src/panels/viewport.rs`
 - `crates/rust4d_editor/src/panels/scene_panel.rs`
+- `crates/rust4d_editor/src/panels/script_panel.rs` (Lua error display)
+- `crates/rust4d_editor/src/panels/lua_console.rs` (Lua REPL)
 
 **Modified files**:
 - `crates/rust4d_render/src/pipeline/render_pipeline.rs` -- bind group 1 for lights, shadow pipeline
@@ -784,6 +970,7 @@ Single directional shadow map is basic but sufficient for a boomer shooter. 4D-s
 - `crates/rust4d_render/src/shaders/render.wgsl` -- point light loop, triplanar mapping, shadow sampling
 - `crates/rust4d_core/src/components.rs` (or equivalent) -- `PointLight4D` component
 - `crates/rust4d_input/src/lib.rs` (or `input_actions.rs`) -- `rebind()`, `to_toml()`, `from_toml()`
+- `crates/rust4d_scripting/src/bindings/` -- Lua binding modules for input, textures, lighting
 - `Cargo.toml` -- add `rust4d_editor` to workspace members
 
 ---
@@ -792,6 +979,8 @@ Single directional shadow map is basic but sufficient for a boomer shooter. 4D-s
 
 Phase 5 is where the Rust4D engine goes from a rendering/physics foundation to a complete development toolkit. The editor is the crown jewel -- a 4D-aware scene editor with the unique W-slice navigation feature that no other tool can provide. The lighting, texture, and input rebinding systems round out the engine's capabilities for shipping a game.
 
-The phase is large (10-12.5 sessions total) but highly parallelizable internally. With three agents on Wave 1 and one agent on Wave 2, the critical path drops to 7-8 sessions. The deepest risk is scope creep on the editor; the MVE definition exists specifically to guard against this.
+With the Lua migration, Phase 5 gains three additional dimensions: thin Lua bindings for textures, lighting, and input rebinding (+0.35 sessions), plus two new editor panels -- a script error display and Lua console (+0.5 sessions minimal). These additions are modest but critical for the Lua-driven development workflow: developers need to see script errors in the editor and have a REPL for runtime debugging.
 
-After Phase 5, the Rust4D engine provides everything a 4D game needs: math, physics, rendering (with lighting and textures), input (with rebinding), ECS, serialization, and a development editor. The game repo builds game-specific systems on top of these APIs.
+The phase is large (10.85-13.75 sessions total with minimal Lua scoping) but highly parallelizable internally. With three agents on Wave 1 and one agent on Wave 2, the critical path drops to 7-8.5 sessions. The deepest risk is scope creep on the editor; the MVE definition exists specifically to guard against this. The Lua editor panels (full script editor, rich console) are explicitly deferred to Phase 6 if the minimal versions prove sufficient.
+
+After Phase 5, the Rust4D engine provides everything a 4D game needs: math, physics, rendering (with lighting and textures), input (with rebinding), ECS, serialization, Lua scripting with full API access, and a development editor with script-aware tooling. The game repo builds game-specific systems on top of these APIs entirely in Lua.

@@ -1,10 +1,11 @@
 # Post-Split Phase 1: Combat Core (Engine Side)
 
 **Date**: 2026-01-31
+**Updated 2026-01-31**: Integrated Lua scripting amendments -- Lua bindings for raycasting, collision events, and trigger callbacks are now part of this plan.
 **Status**: Planning Document (Implementation-Ready)
-**Depends On**: Engine/Game Split Plan (Phases 1-3 complete: ECS migration done, `rust4d_game` exists, game repo exists)
-**Engine Estimate**: 1.75 sessions
-**Game Estimate**: 2 sessions (documented for context, not planned here)
+**Depends On**: Engine/Game Split Plan (Phases 1-3 complete: ECS migration done, `rust4d_game` exists, game repo exists); `rust4d_scripting` crate with mlua integration (for Sub-Phase C)
+**Engine Estimate**: 2.25-2.5 sessions (originally 1.75; +0.5-0.75 for Lua bindings)
+**Game Estimate**: Lua scripts replace compiled Rust game code; game-side work is writing Lua scripts that call engine APIs
 
 ---
 
@@ -21,19 +22,30 @@ The original cross-swarm synthesis scoped Phase 1 as four features across 3-4 se
 After Agent P1's detailed review of the actual engine source code and the engine/game boundary, the scope narrows significantly on the engine side:
 
 - **Raycasting** is entirely engine work, split across `rust4d_math` (geometric primitive) and `rust4d_physics` (world queries). This is the most substantial item.
-- **Event system**: The engine does NOT need a general-purpose event bus (that belongs in `rust4d_game::events`). However, the physics engine must *produce* collision event DATA that the game-side event system can consume.
-- **Health/damage** is purely game-side. The engine needs nothing.
-- **Trigger callbacks**: The trigger infrastructure is half-built but has a design bug (asymmetric detection never fires). The engine must fix this and report trigger overlaps as events.
+- **Event system**: The engine does NOT need a general-purpose event bus. The physics engine must *produce* collision event DATA. With the Lua scripting architecture, the game consumes these events through registered Lua callbacks rather than a Rust-side `EventBus`.
+- **Health/damage** is purely game-side (Lua scripts). The engine needs nothing.
+- **Trigger callbacks**: The trigger infrastructure is half-built but has a design bug (asymmetric detection never fires). The engine must fix this and report trigger overlaps as events. With Lua, triggers invoke Lua functions directly instead of routing through a Rust `GameEvent(String)` pattern.
 
-**Why this matters**: Without raycasting, no hitscan weapons, no line-of-sight, no picking. Without collision events, no way for the game to know when things collide or enter trigger zones. These are the minimum primitives the engine must expose for any combat gameplay to exist.
+**What the Lua architecture changes**: The engine's internal Rust implementation is completely unchanged. What changes is the *surface area the engine exposes*. Everything that was "game implements in Rust" now needs Lua bindings so scripts can call it. Additionally, some game-framework types become unnecessary because Lua provides equivalent capability natively.
+
+**What gets simpler with Lua**:
+- **Trigger system**: `GameEvent(String)` was a workaround for not having a scripting language. With Lua, triggers call Lua functions directly. The string-to-game-event translation layer is unnecessary. Triggers become: detect overlap -> call Lua function. Much cleaner.
+- **EventBus in rust4d_game**: The general-purpose `EventBus` with typed `GameEvent` enum is no longer needed as a Rust type for game-side consumption. Lua scripts register callbacks directly with the engine. A Lua-side event system (a simple pub/sub table) replaces the Rust `EventBus` for game events.
+
+**What is removed from engine scope**:
+- **`rust4d_game::events::EventBus`**: No longer needed. The engine's collision event reporting remains (internal Rust), but game-side event dispatch is now Lua-native.
+- **`GameEvent` enum**: This typed Rust enum (Damage, Pickup, TriggerEnter, etc.) is replaced by Lua tables and strings -- no Rust enum needed.
+- **`StateMachine` dependency**: This phase no longer depends on or feeds into a Rust-side FSM. Lua handles state management natively.
+
+**Why this matters**: Without raycasting, no hitscan weapons, no line-of-sight, no picking. Without collision events, no way for the game to know when things collide or enter trigger zones. Without Lua bindings, none of this is accessible to game scripts. These are the minimum primitives the engine must expose for any combat gameplay to exist.
 
 ---
 
 ## 2. Engine vs Game Boundary
 
-This phase draws a clear line:
+This phase draws a clear line. With the Lua scripting architecture, the boundary shifts: items previously implemented as game-side Rust code now need Lua bindings so game scripts can call them.
 
-### Engine Provides (this plan)
+### Engine Provides (this plan -- Rust implementation)
 - `Ray4D` geometric primitive in `rust4d_math`
 - Ray-shape intersection functions in `rust4d_physics` (ray vs sphere, AABB, hyperplane)
 - `PhysicsWorld::raycast()` with layer mask filtering
@@ -44,17 +56,36 @@ This phase draws a clear line:
 - `Vec4` utility additions (`distance()`, `distance_squared()`, `f32 * Vec4`)
 - `sphere_vs_sphere` visibility fix (currently private, should be public standalone)
 
-### Game Implements (not in this plan)
-- `Health { current: f32, max: f32 }` component -- purely game-defined
-- `Damage` system -- reads collision events + raycasts, applies to Health
-- Death handling -- game logic triggered by `health.current <= 0.0`
-- `EventBus` -- general-purpose event dispatch lives in `rust4d_game::events`
-- `GameEvent` enum (Damage, Pickup, TriggerEnter, TriggerExit, Death, etc.)
-- Weapon hitscan/projectile logic that calls `PhysicsWorld::raycast()`
-- AI line-of-sight wrappers around `PhysicsWorld::raycast()`
-- Trigger-to-gameplay translation (what happens when player enters a trigger zone)
+### Engine Provides (this plan -- Lua bindings)
+- `world:raycast(origin, direction, max_dist, layer_mask)` returning Lua table of hits
+- `world:raycast_nearest(origin, dir, max_dist, mask)` returning hit table or `nil`
+- `CollisionLayer` constants exposed to Lua scope (`LAYER.PLAYER`, `LAYER.ENEMY`, `LAYER.STATIC`, etc.)
+- Lua callback registration: `on_collision(callback)`, `on_trigger_enter(callback)`, `on_trigger_stay(callback)`, `on_trigger_exit(callback)`
+- Event dispatch: engine calls `drain_collision_events()` internally each frame and dispatches to registered Lua callbacks
 
-Agent P1 was emphatic: **Health/damage is 100% game-side.** Different games have wildly different health models (HP bars, shield + health, damage types, armor, invulnerability frames). The engine provides collision events and raycasting; the game defines what "taking damage" means.
+### Lua Binding Boundary Details
+
+The following table shows what was previously game-side Rust and is now exposed through Lua bindings:
+
+| Was (Rust game code) | Becomes (Engine Lua binding) |
+|---------------------|------------------------------|
+| Game calls `physics_world.raycast()` in Rust | `world:raycast(origin, direction, max_dist, layer_mask)` returns Lua table of hits |
+| Game calls `physics_world.raycast_nearest()` in Rust | `world:raycast_nearest(origin, dir, max_dist, mask)` returns hit or nil |
+| Game calls `physics_world.drain_collision_events()` in Rust | Engine dispatches events to registered Lua callbacks |
+| Game reads `WorldRayHit.hit.distance`, `.hit.point`, `.hit.normal`, `.target` | Lua hit table: `{ distance=N, point=vec4, normal=vec4, target={type="body", key=K} }` |
+| Game reads `CollisionEvent.kind` variants | Lua event tables: `{ type="body_vs_body", body_a=K, body_b=K, contact={...} }` |
+| Game iterates `CollisionLayer` bitflags for filtering | `CollisionLayer` exposed as Lua constants: `LAYER.PLAYER`, `LAYER.ENEMY`, `LAYER.STATIC`, etc. |
+| `EventBus` in `rust4d_game::events` dispatches typed Rust events | Engine provides Lua callback registration: `on_collision(function(event) ... end)` |
+
+### Game Implements (Lua scripts, not in this plan)
+- `Health { current, max }` -- purely game-defined Lua table
+- Damage system -- Lua scripts read collision events + raycasts, modify health tables
+- Death handling -- Lua game logic triggered by `health.current <= 0`
+- Weapon hitscan/projectile logic that calls `world:raycast()`
+- AI line-of-sight wrappers around `world:line_of_sight()`
+- Trigger-to-gameplay translation (what happens when player enters a trigger zone -- now a Lua callback function)
+
+Agent P1 was emphatic: **Health/damage is 100% game-side.** Different games have wildly different health models (HP bars, shield + health, damage types, armor, invulnerability frames). The engine provides collision events and raycasting; the game defines what "taking damage" means. With Lua, this remains true -- the game implements health in Lua scripts, not Rust types.
 
 ---
 
@@ -552,11 +583,13 @@ impl PhysicsWorld {
 
 **Why drain/poll over return value**: Simpler, does not change the `step()` signature (which would be a breaking change across many call sites).
 
-Game-side usage pattern:
-1. Call `physics_world.step(dt)`
-2. Call `physics_world.drain_collision_events()`
-3. For each collision event, translate into game events (damage, trigger, etc.)
-4. Dispatch game events through the game-side `EventBus`
+**With Lua**: The engine calls `drain_collision_events()` internally each frame and dispatches events to registered Lua callbacks. Game scripts never call drain directly -- they register callbacks and the engine invokes them. See Sub-Phase C for the Lua dispatch design.
+
+Game-side usage pattern (Lua):
+1. Engine calls `physics_world.step(dt)` internally
+2. Engine calls `physics_world.drain_collision_events()` internally
+3. For each collision event, engine dispatches to registered Lua callbacks
+4. Lua callbacks handle game logic (damage, pickups, effects, etc.)
 
 ### Design: Two-Pass Collision Detection (Trigger Fix)
 
@@ -694,26 +727,167 @@ The collision detection code already exists. The work is adding event accumulati
 
 ---
 
-## 5. Session Estimates
+## 5. Sub-Phase C: Lua Bindings for Combat Core APIs
+
+### Rationale
+
+With the Lua scripting architecture, the engine must expose raycasting, collision events, and trigger callbacks to Lua so game scripts can use them. Without Lua bindings, the Rust-side physics primitives from Sub-Phases A and B are inaccessible to game code.
+
+This sub-phase depends on the `rust4d_scripting` crate (mlua integration, script loading, hot-reload) already existing. It also depends on Sub-Phases A and B being complete so the Rust APIs exist to bind.
+
+### Design: Lua Raycasting Wrappers (~0.25 session)
+
+Bind `PhysicsWorld::raycast()` and `raycast_nearest()` to Lua:
+
+```lua
+-- Lua API: world:raycast(origin, direction, max_dist, layer_mask)
+-- Returns: array of hit tables, sorted by distance (nearest first)
+local hits = world:raycast(
+    vec4(0, 1, 0, 0),      -- origin
+    vec4(1, 0, 0, 0),      -- direction
+    100.0,                   -- max_distance
+    LAYER.ENEMY | LAYER.STATIC  -- layer_mask
+)
+
+for _, hit in ipairs(hits) do
+    print(hit.distance)     -- f32
+    print(hit.point)        -- vec4
+    print(hit.normal)       -- vec4
+    print(hit.target.type)  -- "body" or "static"
+    print(hit.target.key)   -- body key or static index
+end
+
+-- Lua API: world:raycast_nearest(origin, dir, max_dist, mask)
+-- Returns: single hit table or nil
+local hit = world:raycast_nearest(origin, dir, 100.0, LAYER.ALL)
+if hit then
+    -- process nearest hit
+end
+```
+
+Implementation notes:
+- `RayHit` and `WorldRayHit` are converted to Lua tables on return (not userdata -- scripts need to read fields freely)
+- `CollisionLayer` constants exposed to Lua scope as `LAYER.PLAYER`, `LAYER.ENEMY`, `LAYER.STATIC`, `LAYER.TRIGGER`, `LAYER.PROJECTILE`, `LAYER.ALL`
+- Bitwise OR on layer constants works via Lua 5.4 integer bitwise operators
+
+### Design: Lua Collision Event Dispatch (~0.25 session)
+
+The engine calls `drain_collision_events()` each frame internally and dispatches to registered Lua callbacks:
+
+```lua
+-- Lua API: register callbacks for collision events
+on_collision(function(event)
+    -- event = { type="body_vs_body", body_a=K, body_b=K, contact={...} }
+    -- or:     { type="body_vs_static", body=K, static_index=N, contact={...} }
+    if event.type == "body_vs_body" then
+        -- handle body collision
+    end
+end)
+
+on_trigger_enter(function(event)
+    -- event = { body=K, trigger_index=N }
+    local body_key = event.body
+    local trigger_idx = event.trigger_index
+    -- apply game logic: damage, pickup, etc.
+end)
+
+on_trigger_stay(function(event)
+    -- continuous damage zone, etc.
+end)
+
+on_trigger_exit(function(event)
+    -- cleanup when leaving trigger zone
+end)
+```
+
+Implementation notes:
+- Alternative design: single `on_physics_event(callback)` with event type discrimination in Lua. The per-type callback approach is recommended because it is more intuitive and avoids unnecessary dispatch overhead in Lua.
+- Multiple Lua callbacks can be registered for the same event type (engine maintains a list per event type)
+- Error in a Lua callback does not crash the engine -- the error is logged and execution continues to the next callback
+
+### Design: Lua Trigger Callbacks (~0.25 session)
+
+Triggers can invoke Lua functions directly instead of routing through `GameEvent(String)`:
+
+```lua
+-- Define trigger handler functions
+function on_health_pickup(trigger_index, body_key)
+    local entity = world:entity_for_body(body_key)
+    local health = entity:get("health")
+    health.current = math.min(health.current + 25, health.max)
+    entity:set("health", health)
+    audio:play_oneshot("pickup_health", "sfx")
+    world:despawn(trigger_index)  -- remove the pickup
+end
+
+-- Triggers in RON reference Lua functions by name:
+-- TriggerAction::Callback("on_health_pickup")
+```
+
+This is far more powerful than the `GameEvent(String)` escape hatch:
+- Instead of the game needing to match on string event names and dispatch, the trigger directly invokes arbitrary game logic
+- Any trigger action can be arbitrary Lua code
+- No string-to-game-event translation layer needed
+
+`TriggerAction::LuaCallback(String)` is added as a variant -- it calls a named Lua function when the trigger fires, passing the trigger index and body key as arguments.
+
+### File List
+
+| File | Action | Crate |
+|------|--------|-------|
+| `crates/rust4d_scripting/src/bindings/physics.rs` | NEW: Lua bindings for raycasting and collision events | rust4d_scripting |
+| `crates/rust4d_scripting/src/bindings/mod.rs` | EDIT: add `pub mod physics;` | rust4d_scripting |
+| `crates/rust4d_scripting/src/lib.rs` | EDIT: register physics bindings in Lua state | rust4d_scripting |
+
+Note: Exact file paths depend on how `rust4d_scripting` is structured. The above assumes a `bindings/` module pattern.
+
+### Tests Required (Lua Integration Tests)
+
+- Lua script calls `world:raycast()` and receives correct hit table
+- Lua script calls `world:raycast_nearest()` and gets `nil` on miss
+- `on_trigger_enter` callback fires when entity enters trigger zone
+- `on_trigger_exit` callback fires when entity leaves trigger zone
+- `CollisionLayer` constants accessible from Lua (`LAYER.PLAYER`, etc.)
+- Lua callback receives correct event table fields (body keys, contact data)
+- Multiple Lua callbacks can be registered for the same event type
+- Error in Lua callback does not crash engine (logged, execution continues)
+- `TriggerAction::LuaCallback("func_name")` correctly invokes the named Lua function
+
+### Session Estimate
+
+**0.5-0.75 sessions** (0.25 raycasting wrappers + 0.25 collision event dispatch + 0.25 trigger callbacks). The lower end assumes `rust4d_scripting` has well-established patterns for binding Rust APIs to Lua; the upper end accounts for working through mlua type conversion details.
+
+---
+
+## 6. Session Estimates
 
 | Sub-Phase | Scope | Estimate |
 |-----------|-------|----------|
 | A: Raycasting | Ray4D, ray-shape intersections, world raycast, Vec4 utilities, sphere_vs_sphere fix | 1 session |
 | B: Collision Events & Triggers | CollisionEvent types, event accumulation, trigger detection bug fix, enter/exit tracking, drain API | 0.75 session |
-| **Total Engine Work** | | **1.75 sessions** |
+| C: Lua Bindings | Raycasting Lua wrappers, collision event Lua dispatch, trigger Lua callbacks, CollisionLayer constants | 0.5-0.75 session |
+| **Total Engine Work** | | **2.25-2.5 sessions** |
 
-For context, the game-side work that builds on these primitives:
+Comparison with pre-Lua estimates:
 
-| Game Feature | Engine Dependency | Estimate |
-|--------------|-------------------|----------|
-| Health/damage system | Collision events + raycasting | 1 session |
-| EventBus + GameEvent types | Collision events | 0.75 session |
-| Trigger-to-gameplay translation | Trigger events | 0.25 session |
-| **Total Game Work** | | **2 sessions** |
+| Sub-Phase | Original | Amended | Delta |
+|-----------|----------|---------|-------|
+| A: Raycasting | 1.0 | 1.0 | 0 (no change to Rust impl) |
+| B: Collision Events & Triggers | 0.75 | 0.75 | 0 (no change to Rust impl) |
+| NEW C: Lua bindings for P1 APIs | -- | 0.5-0.75 | +0.5-0.75 |
+| **Total** | **1.75** | **2.25-2.5** | **+0.5-0.75** |
+
+For context, the game-side work that builds on these primitives is now Lua scripts rather than compiled Rust:
+
+| Game Feature | Engine Dependency | Notes |
+|--------------|-------------------|-------|
+| Health/damage system | Collision events + raycasting | Lua tables and callbacks, not Rust types |
+| Event dispatch | Collision events | Lua pub/sub tables replace Rust `EventBus` |
+| Trigger-to-gameplay | Trigger Lua callbacks | Direct Lua function invocation, no string dispatch |
 
 ---
 
-## 6. Dependencies
+## 7. Dependencies
 
 ### On the Engine/Game Split Plan
 
@@ -721,7 +895,16 @@ This phase assumes the split plan is complete through at least Phase 2:
 - **Phase 1 (ECS Migration)**: Completed. `hecs`-based ECS is in place. Entity system is component-based.
 - **Phase 2 (Game Logic Extraction + `rust4d_game`)**: Completed. `rust4d_game` crate exists with `CharacterController4D`, basic event system, scene helpers. `PhysicsWorld` has generic body methods.
 
-The split plan's Phase 2 event system in `rust4d_game::events` provides the game-level `EventBus`. This Combat Core phase provides the engine-level collision event DATA that the EventBus consumes.
+### On Lua Scripting Infrastructure
+
+Sub-Phase C depends on the `rust4d_scripting` crate already existing and providing:
+- mlua integration with Lua 5.4 runtime
+- Script loading and execution lifecycle
+- Hot-reload support for Lua scripts
+- Error handling and reporting
+- The global Lua state with engine API tables registered
+
+Sub-Phases A and B (pure Rust) have no dependency on the scripting crate and can proceed independently. Sub-Phase C can only begin once the scripting foundation exists AND Sub-Phases A and B are complete.
 
 ### On Foundation Phase
 
@@ -731,13 +914,15 @@ The split plan's Phase 2 event system in `rust4d_game::events` provides the game
 
 ### External Dependencies
 
-None. This phase adds to `rust4d_math` and `rust4d_physics` only, both of which have no external dependencies beyond `std`.
+Sub-Phases A and B: None. These add to `rust4d_math` and `rust4d_physics` only, which have no external dependencies beyond `std`.
+
+Sub-Phase C: Depends on `mlua` (via `rust4d_scripting`).
 
 ---
 
-## 7. Parallelization
+## 8. Parallelization
 
-Sub-Phases A and B can be implemented **fully in parallel** by separate agents or in separate worktrees:
+Sub-Phases A and B can be implemented **fully in parallel** by separate agents or in separate worktrees. Sub-Phase C must wait for both A and B to complete, plus the `rust4d_scripting` crate to exist.
 
 ```
 Wave 1 (Parallel -- No Dependencies Between Sub-Phases)
@@ -756,14 +941,24 @@ Wave 1 (Parallel -- No Dependencies Between Sub-Phases)
     ├── detect_trigger_overlaps() (asymmetric detection fix)
     ├── active_triggers HashSet + enter/exit/stay tracking
     └── All collision event + trigger tests
+
+Wave 2 (Sequential -- Depends on Wave 1 + rust4d_scripting)
+└── Agent/Worktree 3: Sub-Phase C (Lua Bindings)
+    ├── Lua raycasting wrappers (world:raycast, world:raycast_nearest)
+    ├── CollisionLayer Lua constants
+    ├── Lua collision event dispatch (on_collision, on_trigger_enter, etc.)
+    ├── Lua trigger callback invocation (TriggerAction::LuaCallback)
+    └── All Lua integration tests
 ```
 
-**Why these parallelize cleanly**:
+**Why A and B parallelize cleanly**:
 - Sub-Phase A touches `rust4d_math/src/ray.rs` (new file), `rust4d_math/src/vec4.rs`, `rust4d_physics/src/raycast.rs` (new file), and adds methods to `world.rs`.
 - Sub-Phase B touches `rust4d_physics/src/collision.rs` and adds different methods + fields to `world.rs`.
 - The only shared file is `world.rs`. The additions are orthogonal (raycasting queries vs event accumulation in step), but merge coordination is needed for `world.rs` and `lib.rs`.
 
-**Merge strategy**: If running in parallel, one agent should merge first, then the second agent rebases. The `world.rs` changes do not conflict semantically (raycasting reads bodies; collision events writes to a separate field during step).
+**Why C must be sequential**: It binds APIs created in A and B. It also depends on the scripting crate infrastructure.
+
+**Merge strategy**: If running Wave 1 in parallel, one agent should merge first, then the second agent rebases. The `world.rs` changes do not conflict semantically (raycasting reads bodies; collision events writes to a separate field during step).
 
 Within Sub-Phase A, the implementation order is:
 1. Vec4 utilities (unblocks nothing, but quick)
@@ -778,9 +973,15 @@ Within Sub-Phase B, the implementation order is:
 4. detect_trigger_overlaps() with asymmetric check
 5. active_triggers + enter/exit/stay tracking (depends on detect_trigger_overlaps)
 
+Within Sub-Phase C, the implementation order is:
+1. CollisionLayer Lua constants (quick, unblocks raycasting wrappers)
+2. Raycasting Lua wrappers (depends on Sub-Phase A complete)
+3. Collision event Lua dispatch (depends on Sub-Phase B complete)
+4. Trigger Lua callbacks (depends on collision event dispatch)
+
 ---
 
-## 8. Verification Criteria
+## 9. Verification Criteria
 
 ### Sub-Phase A: Raycasting
 
@@ -821,46 +1022,69 @@ Within Sub-Phase B, the implementation order is:
 - [ ] All new tests pass with `cargo test --workspace`
 - [ ] All existing tests still pass (no regressions)
 
+### Sub-Phase C: Lua Bindings
+
+- [ ] Lua script calls `world:raycast()` and receives correct hit table with distance, point, normal, target fields
+- [ ] Lua script calls `world:raycast_nearest()` and gets `nil` on miss
+- [ ] `CollisionLayer` constants accessible from Lua (`LAYER.PLAYER`, `LAYER.ENEMY`, `LAYER.STATIC`, etc.)
+- [ ] Bitwise OR on `CollisionLayer` constants works for building layer masks
+- [ ] `on_collision` callback fires with correct event table for body-body and body-static collisions
+- [ ] `on_trigger_enter` callback fires when entity enters trigger zone
+- [ ] `on_trigger_stay` callback fires on subsequent frames of continued overlap
+- [ ] `on_trigger_exit` callback fires when entity leaves trigger zone
+- [ ] Lua callback receives correct event table fields (body keys, trigger index, contact data)
+- [ ] Multiple Lua callbacks can be registered for the same event type
+- [ ] Error in Lua callback does not crash engine (logged, execution continues)
+- [ ] `TriggerAction::LuaCallback("func_name")` correctly invokes the named Lua function
+- [ ] All Lua integration tests pass
+- [ ] All existing Rust tests still pass (no regressions from binding layer)
+
 ### Integration
 
-- [ ] A complete workflow functions: create physics world -> add bodies and static triggers -> step -> drain events -> see TriggerEnter/TriggerStay/TriggerExit cycle
-- [ ] A complete workflow functions: create physics world -> add bodies -> raycast -> get WorldRayHit with correct target and distance
+- [ ] A complete workflow functions: create physics world -> add bodies and static triggers -> step -> engine dispatches events to Lua callbacks -> see TriggerEnter/TriggerStay/TriggerExit cycle in Lua
+- [ ] A complete workflow functions: Lua script calls `world:raycast()` -> get hit table with correct target and distance
 - [ ] No changes to `step()` return type (drain pattern only)
+- [ ] Engine manages the drain-and-dispatch cycle internally; Lua scripts only register callbacks
 
 ---
 
-## 9. Cross-Phase Dependencies
+## 10. Cross-Phase Dependencies
 
 Other post-split phases depend on Combat Core's outputs:
 
 ### Phase 2 (Weapons & Feedback) -- Needs Raycasting
-- Hitscan weapons call `PhysicsWorld::raycast()` to detect hits.
-- Weapon impact effects spawn at `RayHit.point` with orientation from `RayHit.normal`.
-- Audio triggers come from game events that are derived from collision events, not directly from engine collision events. (Confirmed in hive-mind by Agent P1 and Agent P2.)
+- Hitscan weapons call `world:raycast()` from Lua scripts to detect hits.
+- Weapon impact effects spawn at hit point with orientation from hit normal.
+- Audio triggers come from Lua callbacks on collision events, not from a Rust-side event chain. (Confirmed in hive-mind by Agent P1 and Agent P2.)
 
 ### Phase 3 (Enemies & AI) -- Needs Raycasting
-- Enemy line-of-sight checks use `PhysicsWorld::raycast()` with `layer_mask: CollisionLayer::STATIC | CollisionLayer::PLAYER`.
+- Enemy line-of-sight checks use `world:line_of_sight()` (built on raycasting) from Lua AI scripts.
 - Agent P3 stubs LOS as `true` until raycasting is ready. Once Combat Core is done, P3 drops the stub.
 - For W-phasing enemies, the AI checks LOS considering W-distance attenuation, not just geometric occlusion. (Note from Agent P3 in hive-mind.)
-- Hyperspherical area damage uses `PhysicsWorld` spatial queries (not raycasting), but benefits from collision events to know when explosions hit.
+- Hyperspherical area damage uses spatial queries (not raycasting), but benefits from collision events to know when explosions hit.
 
 ### Phase 4 (Level Design Pipeline) -- Needs Trigger Events
-- Declarative trigger system (`TriggerDef` in RON) reads `TriggerEnter` from `drain_collision_events()`.
+- Declarative trigger system (`TriggerDef` in RON) uses `TriggerAction::Callback("lua_func")` to invoke Lua functions when triggers fire.
 - Pickup triggers use `CollisionFilter::trigger(CollisionLayer::PLAYER)`.
-- Door/elevator mechanics triggered by trigger zones.
-- Agent P4 asked (in hive-mind) whether the event system supports string-named events. Answer: `CollisionEvent` is purely typed. String-named events (`GameEvent(String)`) belong in the `rust4d_game` EventBus. The game translates physics `TriggerEnter` events into named game events.
+- Door/elevator mechanics triggered by Lua callbacks on trigger zones -- far simpler than the Rust struct approach.
+- The question of string-named events is resolved: with Lua, triggers call Lua functions directly. No `GameEvent(String)` dispatch needed.
 
 ### Phase 5 (Editor & Polish) -- No Direct Dependency
 - Editor does not directly depend on raycasting or collision events.
 - However, a future editor feature (click-to-select entities in viewport) would use raycasting.
+- Editor's Lua console can call `world:raycast()` for debugging.
 
 ### Foundation -- Feeds Into This Phase
 - Fixed timestep improves trigger enter/exit reliability.
 - `sphere_vs_sphere` fix is a foundation-level cleanup done here as a convenience.
 
+### Scripting Phase -- Feeds Into Sub-Phase C
+- `rust4d_scripting` crate must provide mlua integration, script loading, hot-reload, error handling, and the global Lua state before Sub-Phase C can begin.
+- Sub-Phases A and B have no dependency on the scripting crate.
+
 ---
 
-## 10. Open Questions
+## 11. Open Questions
 
 1. **Dynamic trigger bodies**: The current design only covers static trigger colliders (triggers as world geometry). Should dynamic bodies also be able to act as triggers? (e.g., a moving damage field.) If so, the body-body collision loop also needs asymmetric trigger detection. **Recommendation**: Defer until a game use case requires it.
 
@@ -871,3 +1095,9 @@ Other post-split phases depend on Combat Core's outputs:
 4. **`sphere_vs_sphere` refactoring scope**: Should this be a public function in `collision.rs` (like the other shape-shape tests) or in a separate `intersections.rs` module? Follow the existing pattern in the crate.
 
 5. **`TriggerStay` performance**: If many bodies are inside many triggers simultaneously, `TriggerStay` events could dominate the event buffer each frame. Consider making `TriggerStay` opt-in or providing a `drain_collision_events_filtered()` variant. For now, include it and monitor.
+
+6. **Lua callback dispatch overhead**: Calling Lua functions from Rust on every collision event adds per-frame overhead. For a boomer shooter (20-50 enemies, a few hundred collisions per frame), this is negligible. Monitor if event volumes grow. Consider batching (pass all events to a single Lua call as a table) if per-call overhead becomes measurable.
+
+7. **Single vs per-type callbacks**: The design above offers per-type callbacks (`on_collision`, `on_trigger_enter`, etc.). An alternative is a single `on_physics_event(callback)` with type discrimination in Lua. Per-type is recommended for clarity and to avoid unnecessary Lua-side dispatch, but both could be supported.
+
+8. **Lua trigger callback error recovery**: When a `TriggerAction::LuaCallback("func_name")` fails (function not found, runtime error), the engine should log the error and continue. Should it also disable the callback to prevent log spam? **Recommendation**: Log on first error, then silence repeated errors for the same trigger+function pair until the script is hot-reloaded.
