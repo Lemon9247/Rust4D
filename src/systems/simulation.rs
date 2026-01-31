@@ -78,8 +78,14 @@ impl SimulationSystem {
             Vec4::new(camera_right.x, 0.0, camera_right.z, camera_right.w).normalized();
         let ana_xzw = Vec4::new(camera_ana.x, 0.0, camera_ana.z, camera_ana.w).normalized();
 
-        // Combine movement direction
+        // Combine movement direction and normalize to prevent faster diagonal movement
+        // Without this, 2-axis movement is ~41% faster and 3-axis is ~73% faster
         let move_dir = forward_xzw * forward_input + right_xzw * right_input + ana_xzw * w_input;
+        let move_dir = if move_dir.length_squared() > 1.0 {
+            move_dir.normalized()
+        } else {
+            move_dir
+        };
 
         // 4. Apply movement to player via physics
         let move_speed = controller.move_speed;
