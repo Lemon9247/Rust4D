@@ -38,12 +38,12 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 5. **Performance boundary**: What stays in Rust (physics step, rendering, collision detection) vs what's scriptable (game logic, AI, events)?
 
 ## Status
-- [ ] Agent Analysis: Pending
+- [x] Agent Analysis: Complete -- lua-migration-analysis.md (binding surface, risk assessment, ~80-100 functions to expose)
 - [x] Agent Split: Complete -- rewrote engine-game-split.md for Lua approach (6 phases, 14.5-22 sessions)
 - [x] Agent Scripting: Complete -- created post-split-phase-scripting.md (5 sub-phases, 8-11 sessions)
 - [x] Agent Amendments: Complete -- produced lua-phase-amendments.md with per-phase analysis (P1-P5)
 - [x] Agent Game: Complete -- created game-roadmap-lua.md (6 phases, 12-18 sessions, 5 example scripts)
-- [ ] Final synthesis: Pending
+- [x] Final synthesis: Complete
 
 ## Reports Generated
 - `agent-split-report.md` - Split agent completion report
