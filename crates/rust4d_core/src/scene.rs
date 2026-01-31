@@ -419,7 +419,7 @@ Scene(
             tags: ["static"],
             transform: Transform4D(
                 position: Vec4(x: 0.0, y: -2.0, z: 0.0, w: 0.0),
-                rotation: (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                rotation: (s: 1.0, b_xy: 0.0, b_xz: 0.0, b_xw: 0.0, b_yz: 0.0, b_yw: 0.0, b_zw: 0.0, p: 0.0),
                 scale: 1.0,
             ),
             shape: ShapeTemplate(
@@ -437,7 +437,7 @@ Scene(
             tags: ["dynamic"],
             transform: Transform4D(
                 position: Vec4(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                rotation: (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                rotation: (s: 1.0, b_xy: 0.0, b_xz: 0.0, b_xw: 0.0, b_yz: 0.0, b_yw: 0.0, b_zw: 0.0, p: 0.0),
                 scale: 1.0,
             ),
             shape: ShapeTemplate(
