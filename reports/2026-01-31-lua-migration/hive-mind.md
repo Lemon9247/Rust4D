@@ -40,7 +40,7 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 ## Status
 - [ ] Agent Analysis: Pending
 - [x] Agent Split: Complete -- rewrote engine-game-split.md for Lua approach (6 phases, 14.5-22 sessions)
-- [ ] Agent Scripting: Pending
+- [x] Agent Scripting: Complete -- created post-split-phase-scripting.md (5 sub-phases, 8-11 sessions)
 - [x] Agent Amendments: Complete -- produced lua-phase-amendments.md with per-phase analysis (P1-P5)
 - [ ] Agent Game: Pending
 - [ ] Final synthesis: Pending
@@ -48,6 +48,7 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 ## Reports Generated
 - `agent-split-report.md` - Split agent completion report
 - `agent-amendments-report.md` - Amendments agent completion report
+- `agent-scripting-report.md` - Scripting agent completion report
 
 ## Key Findings
 - **Split agent**: Total effort increases from 9.5-14 to 14.5-22 sessions. The Lua scripting phase (4-6 sessions) is the main new work. Game repo setup is simpler (1-2 sessions vs 1-2 sessions for Rust). Phase 3 (Lua Scripting Integration) has internal parallelism -- bindings for different modules are independent.
@@ -59,3 +60,10 @@ Adapt the Rust4D roadmap from "game in Rust" to "game in Lua". The engine become
 - **Amendments agent**: Trigger system (P4) dramatically improved -- `GameEvent(String)` replaced by `TriggerAction::Callback(String)` calling Lua functions directly.
 - **Amendments agent**: Editor (P5) needs script editing panel + Lua console. Minimal scope: +0.5 sessions; full scope: +2.5 sessions.
 - **Amendments agent**: Open question for Agent Split: does `rust4d_game` still make sense? Many planned types (EventBus, GameEvent, FSM) become unnecessary with Lua.
+- **Scripting agent**: Total effort for `rust4d_scripting` crate: 8-11 sessions (critical path ~7.5 with parallelism). Five sub-phases: Core Runtime (2), ECS Bindings (2-3), Engine API Bindings (2-3), Hot-Reload (1), Game Framework Bindings (1-2).
+- **Scripting agent**: Key architecture decision: global script model (main.lua orchestrates everything) rather than per-entity scripts. Scripts query/modify entities through ECS bindings.
+- **Scripting agent**: ECS bridge uses two-tier approach: optimized fast-path for Transform4D, serialized LuaComponent wrapper for script-defined components (Health, Weapon, etc.).
+- **Scripting agent**: Answered design questions: mlua with Lua 5.4 (LuaJIT via feature flag), both per-frame callbacks AND event callbacks, hot-reload via package.loaded clearing + on_reload() callback, physics/rendering/audio stay in Rust.
+- **Scripting agent**: HUD bindings use simplified draw API (hud.text, hud.rect) rather than exposing full egui. Advanced layouts require Rust.
+- **Scripting agent**: Timer system (timers.after, timers.every) implemented as pure Lua standard library -- no Rust binding needed.
+- **Scripting agent**: Sub-Phases B and D can run in parallel after A completes. Sub-Phase C is incremental -- bindings roll out as P1-P4 APIs arrive.
