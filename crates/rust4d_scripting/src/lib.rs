@@ -30,12 +30,14 @@
 //! ```
 
 pub mod bindings;
+pub mod context;
 pub mod error;
 pub mod hot_reload;
 pub mod lifecycle;
 pub mod loader;
 pub mod vm;
 
+pub use context::{AudioRef, InputSnapshot, ScriptMutations, WorldRef};
 pub use error::ScriptError;
 pub use vm::ScriptConfig;
 
@@ -152,6 +154,62 @@ impl ScriptEngine {
     /// Check if a lifecycle callback exists without calling it
     pub fn has_callback(&self, name: &str) -> bool {
         lifecycle::has_callback(&self.lua, name)
+    }
+
+    // === Per-call app_data context ===
+    //
+    // These register/clear the live World, input snapshot, audio handle, and
+    // physics config into the Lua VM's app_data around each lifecycle callback.
+    // `ScriptSystem` calls `set_*` before dispatch and `clear_*` after.
+
+    /// Register the live `World` for the duration of a callback, plus a fresh
+    /// mutation flag the ECS bindings can set.
+    pub fn set_world(&self, world: &mut rust4d_core::World) {
+        self.lua.set_app_data(WorldRef::new(world));
+        self.lua.set_app_data(ScriptMutations::default());
+    }
+
+    /// Remove the per-call World and reset the mutation flag. Returns whether
+    /// scripts mutated the world this call (so the caller can rebuild geometry).
+    pub fn clear_world(&self) -> bool {
+        let dirty = self
+            .lua
+            .app_data_ref::<ScriptMutations>()
+            .map(|m| m.is_dirty())
+            .unwrap_or(false);
+        self.lua.remove_app_data::<ScriptMutations>();
+        self.lua.remove_app_data::<WorldRef>();
+        dirty
+    }
+
+    /// Register the per-frame input snapshot (cloned into app_data).
+    pub fn set_input(&self, input: &InputSnapshot) {
+        self.lua.set_app_data(input.clone());
+    }
+
+    /// Remove the per-frame input snapshot.
+    pub fn clear_input(&self) {
+        self.lua.remove_app_data::<InputSnapshot>();
+    }
+
+    /// Register an optional audio engine for the duration of a callback.
+    pub fn set_audio(&self, audio: Option<&mut rust4d_audio::AudioEngine4D>) {
+        self.lua.set_app_data(AudioRef::new(audio));
+    }
+
+    /// Remove the per-call audio handle.
+    pub fn clear_audio(&self) {
+        self.lua.remove_app_data::<AudioRef>();
+    }
+
+    /// Remove a physics config previously registered via [`Self::set_physics_config_raw`].
+    pub fn clear_physics_config(&self) {
+        self.lua.remove_app_data::<rust4d_physics::PhysicsConfig>();
+    }
+
+    /// Register a concrete `PhysicsConfig` into app_data.
+    pub fn set_physics_config_raw(&self, config: rust4d_physics::PhysicsConfig) {
+        self.lua.set_app_data(config);
     }
 
     /// Execute arbitrary Lua code and return result as string (for debugging/REPL)

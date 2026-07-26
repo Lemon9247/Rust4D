@@ -39,6 +39,12 @@ pub struct AppConfig {
     /// Scene configuration
     #[serde(default)]
     pub scene: SceneConfig,
+    /// Game / scripting configuration
+    #[serde(default)]
+    pub game: GameConfig,
+    /// Audio configuration
+    #[serde(default)]
+    pub audio: AudioConfig,
 }
 
 impl AppConfig {
@@ -281,6 +287,85 @@ impl Default for SceneConfig {
     }
 }
 
+/// Game / scripting configuration
+///
+/// Controls how the engine loads and runs a scripted game directory.
+/// When `game_dir` is empty, scripting is disabled and the engine runs the
+/// configured scene without Lua callbacks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameConfig {
+    /// Root directory of the active game (e.g. `"games/trivial"`).
+    ///
+    /// Empty string disables scripting entirely (backwards-compatible default).
+    /// Overridden by the `--game <dir>` CLI argument.
+    #[serde(default)]
+    pub game_dir: String,
+    /// Subdirectory within `game_dir` containing Lua modules.
+    ///
+    /// Empty string means modules (and `main.lua`) live at the `game_dir` root.
+    /// A relative path is resolved against `game_dir`; an absolute path is used as-is.
+    #[serde(default)]
+    pub scripts_dir: String,
+    /// Enable hot-reload file watching for Lua scripts (dev only).
+    #[serde(default)]
+    pub hot_reload: bool,
+    /// Whether to attempt initializing the audio engine.
+    ///
+    /// Degrades gracefully to silent operation if no audio device is available.
+    #[serde(default = "default_true")]
+    pub audio_enabled: bool,
+}
+
+impl Default for GameConfig {
+    fn default() -> Self {
+        Self {
+            game_dir: String::new(),
+            scripts_dir: String::new(),
+            hot_reload: false,
+            audio_enabled: true,
+        }
+    }
+}
+
+/// Audio bus volume configuration
+///
+/// Applied to the `AudioEngine4D` at startup if audio is enabled. Volumes are
+/// in the `0.0..=1.0` range.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioConfig {
+    /// Master bus volume (affects all other buses)
+    #[serde(default = "default_full_volume")]
+    pub master_volume: f32,
+    /// Sound effects bus volume
+    #[serde(default = "default_full_volume")]
+    pub sfx_volume: f32,
+    /// Music bus volume
+    #[serde(default = "default_full_volume")]
+    pub music_volume: f32,
+    /// Ambient bus volume
+    #[serde(default = "default_full_volume")]
+    pub ambient_volume: f32,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            master_volume: 1.0,
+            sfx_volume: 1.0,
+            music_volume: 0.8,
+            ambient_volume: 0.7,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_full_volume() -> f32 {
+    1.0
+}
+
 /// Configuration error
 #[derive(Debug)]
 pub struct ConfigError {
@@ -312,6 +397,9 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.window.width, 1280);
         assert_eq!(config.physics.gravity, -20.0);
+        assert!(config.game.game_dir.is_empty());
+        assert!(config.game.audio_enabled);
+        assert_eq!(config.audio.master_volume, 1.0);
     }
 
     #[test]

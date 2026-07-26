@@ -4,10 +4,12 @@
 
 mod geometry;
 mod render;
+mod script;
 mod simulation;
 mod window;
 
 pub use geometry::build_geometry;
 pub use render::{RenderError, RenderSystem};
+pub use script::{ScriptSystem, ScriptUpdateResult};
 pub use simulation::SimulationSystem;
 pub use window::WindowSystem;

@@ -16,7 +16,7 @@ What works:
 - Scene serialization and loading (RON format)
 - Configuration system (TOML with env var overrides)
 - 4D spatial audio with bus routing (Master/Sfx/Music/Ambient)
-- Lua 5.4 scripting with lifecycle callbacks and hot-reload
+- Lua 5.4 scripting with lifecycle callbacks, hot-reload, and a real hecs ECS bridge (spawn/query/get/set/despawn) wired into the app loop via `--game <dir>`
 - HUD system with sprites and particles
 - Game utilities: EventBus, StateMachine, TweenManager
 

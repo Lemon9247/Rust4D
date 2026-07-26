@@ -48,3 +48,17 @@ show_colliders = false
 [scene]
 path = "scenes/test_chamber.ron"
 player_radius = 0.5
+
+[game]
+# Empty game_dir disables scripting (engine runs the configured scene only).
+# Override with `--game <dir>` to load a scripted game directory.
+game_dir = ""
+scripts_dir = ""
+hot_reload = false
+audio_enabled = true
+
+[audio]
+master_volume = 1.0
+sfx_volume = 1.0
+music_volume = 0.8
+ambient_volume = 0.7

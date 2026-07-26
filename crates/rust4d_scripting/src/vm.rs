@@ -131,6 +131,10 @@ pub fn create_lua_vm(config: &ScriptConfig) -> Result<Lua, ScriptError> {
         lua.set_app_data(count);
     }
 
+    // Register engine bindings (world, input, audio, hud, physics, math, log)
+    // after sandboxing so scripted games have the full engine API available.
+    crate::bindings::register_all(&lua)?;
+
     Ok(lua)
 }
 

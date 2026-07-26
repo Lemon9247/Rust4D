@@ -1,41 +1,59 @@
-//! ECS bindings for Lua
+//! ECS bindings for Lua — real `hecs::World` bridge
 //!
-//! Provides Lua access to the Entity-Component-System via:
-//! - `world.spawn()` - Create entities
-//! - `world.query()` - Query entities by component
-//! - `world.find_by_name()` - Find entity by name
-//! - `world.despawn()` - Remove entities
-//! - `entity:get()` / `entity:set()` - Access components
-//! - `entity:id()` / `entity:to_bits()` - Entity metadata
+//! Provides Lua access to the live `rust4d_core::World` (a thin wrapper around
+//! `hecs::World` with name/tag/dirty side-tables) via a per-call [`WorldRef`]
+//! registered into `app_data` by `ScriptSystem`.
 //!
-//! ## Design Note
+//! # Component registry
 //!
-//! The ECS `World` lives in the engine, not in Lua. This implementation provides
-//! the binding API structure with stub operations that log what would happen.
-//! The full integration with the engine's `hecs::World` happens when the engine
-//! binary wires up the scripting system.
+//! Components are referred to by string name. The engine's component set is
+//! small and fixed, so the bridge dispatches on an explicit `match` (compile-time
+//! checked, verbose by design):
 //!
-//! This module is owned by Scripting-ECS-Agent.
+//! | name             | Rust component   | get | set | spawn |
+//! |------------------|------------------|:---:|:---:|:-----:|
+//! | `"name"`         | `Name`           | ✅  | ✅  | ✅    |
+//! | `"tags"`         | `Tags`           | ✅  | —   | ✅    |
+//! | `"transform"`    | `Transform4D`    | ✅  | ✅  | ✅    |
+//! | `"material"`     | `Material`       | ✅  | ✅  | ✅    |
+//! | `"dirty"`        | `DirtyFlags`     | ✅  | ✅  | ✅    |
+//! | `"shape"`        | `ShapeRef`       | ✅  | —   | —     |
+//! | `"physics_body"` | `PhysicsBody`    | —   | —   | —     |
+//! | `"parent"`       | `Parent`         | ✅  | —   | —     |
+//! | `"children"`     | `Children`       | ✅  | —   | —     |
+//!
+//! Shapes and physics bodies cannot be created from Lua (they require GPU
+//! geometry / physics-world registration); scripts instead rotate or recolour
+//! scene-placed entities, or spawn marker entities (name/transform/material)
+//! for game logic.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::collections::HashSet;
+use std::rc::Rc;
 
 use mlua::prelude::*;
-use rust4d_core::hecs::Entity;
+use rust4d_core::hecs::{Entity, EntityBuilder};
+use rust4d_core::{
+    Children, DirtyFlags, Material, Name, Parent, PhysicsBody, ShapeRef, Tags, Transform4D, World,
+};
+use rust4d_math::Rotor4;
 
-/// Counter for generating deterministic stub entity IDs when no engine World
-/// is connected. These are still wrapped as real `hecs::Entity` bit patterns,
-/// so scripts can store, compare, and round-trip handles using the same API
-/// real engine entities will use.
-static STUB_ENTITY_COUNTER: AtomicU64 = AtomicU64::new(1);
+use super::math::{LuaRotor4, LuaTransform4D};
+use crate::context::{ScriptMutations, WorldRef};
 
-/// Track whether we've logged the "ECS not connected" warning.
-static ECS_WARNED: AtomicBool = AtomicBool::new(false);
+/// Canonical component names accepted by `world.spawn` / `entity:get` / `entity:set`.
+pub const COMPONENT_NAMES: &[&str] = &[
+    "name",
+    "tags",
+    "transform",
+    "material",
+    "dirty",
+    "shape",
+    "physics_body",
+    "parent",
+    "children",
+];
 
-/// Lua-side entity handle wrapping a hecs::Entity
-///
-/// Provides methods for entity introspection and component access.
-/// Note: Component get/set operations are currently stubs pending
-/// engine integration with the actual hecs::World.
+/// Lua-side entity handle wrapping a real `hecs::Entity`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LuaEntity(pub Entity);
 
@@ -46,31 +64,32 @@ impl LuaEntity {
     }
 
     /// Reconstruct a Lua entity handle from its stable hecs bit pattern.
+    ///
+    /// Returns `None` for stale handles (e.g. after the entity was despawned).
     pub fn from_bits(bits: u64) -> Option<Self> {
         Entity::from_bits(bits).map(Self)
     }
+}
 
-    /// Create a deterministic stub handle for development mode.
-    fn stub(next_id: u64) -> LuaResult<Self> {
-        // hecs Entity bits: high 32 bits = generation, low 32 bits = id.
-        // Generation 1 is enough for stub handles and keeps the bit pattern
-        // valid for `Entity::from_bits`.
-        let generation: u64 = 1;
-        let entity_bits = (generation << 32) | (next_id & 0xffff_ffff);
-        Self::from_bits(entity_bits)
-            .ok_or_else(|| LuaError::RuntimeError("failed to create stub entity handle".into()))
+impl FromLua for LuaEntity {
+    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
+        match value {
+            LuaValue::UserData(ud) => ud.borrow::<LuaEntity>().map(|e| *e),
+            _ => Err(LuaError::FromLuaConversionError {
+                from: value.type_name(),
+                to: "Entity".to_string(),
+                message: Some("expected Entity userdata".to_string()),
+            }),
+        }
     }
 }
 
 impl LuaUserData for LuaEntity {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         // entity:id() -> u64
-        // Returns the entity's unique ID within its generation
         methods.add_method("id", |_, this, ()| Ok(this.0.id() as u64));
 
         // entity:to_bits() -> u64
-        // Returns a unique 64-bit identifier that encodes both ID and generation.
-        // Useful for storing entity references externally or serialization.
         methods.add_method("to_bits", |_, this, ()| Ok(this.0.to_bits().get()));
 
         // entity:equals(other) -> bool
@@ -79,429 +98,750 @@ impl LuaUserData for LuaEntity {
             Ok(this.0 == other.0)
         });
 
-        // entity:get(component_name) -> table or nil
-        // Stub: Returns nil. Real implementation needs World access.
-        methods.add_method("get", |_, this, component: String| {
-            log::trace!("[ecs] entity:get({}) for {:?}", component, this.0);
-            Ok(Option::<LuaTable>::None)
+        // entity:get(component_name) -> value or nil
+        methods.add_method("get", |lua, this, component: String| {
+            with_world(lua, |world| component_get(lua, world, this.0, &component))
         });
 
         // entity:set(component_name, value)
-        // Stub: No-op. Real implementation needs World access.
-        methods.add_method("set", |_, this, (component, _value): (String, LuaValue)| {
-            log::trace!("[ecs] entity:set({}) for {:?}", component, this.0);
-            Ok(())
-        });
+        methods.add_method(
+            "set",
+            |lua, this, (component, value): (String, LuaValue)| {
+                with_world(lua, |world| component_set(world, this.0, &component, value))?;
+                mark_dirty(lua);
+                Ok(())
+            },
+        );
 
         // entity:is_alive() -> bool
-        // Stub: Always returns true. Real implementation needs World access.
-        methods.add_method("is_alive", |_, this, ()| {
-            log::trace!("[ecs] entity:is_alive() for {:?}", this.0);
-            Ok(true)
+        methods.add_method("is_alive", |lua, this, ()| {
+            with_world(lua, |world| Ok(world.contains(this.0)))
         });
     }
 }
 
-/// Register ECS bindings with the Lua VM
-///
-/// Creates a global `world` table with the following functions:
-/// - `world.spawn(components)` - Spawn an entity with components
-/// - `world.query(component_name)` - Query entities by component
-/// - `world.find_by_name(name)` - Find entity by name
-/// - `world.despawn(entity)` - Despawn an entity
-///
-/// # Example (Lua)
-///
-/// ```lua
-/// local entity = world.spawn({ transform = { x = 0, y = 1, z = 0, w = 0 } })
-/// print(entity:id())
-///
-/// for e in world.query("transform") do
-///     local t = e:get("transform")
-/// end
-///
-/// world.despawn(entity)
-/// ```
+// === Per-call World access helper ===
+
+/// Run `f` against the live `World` registered for this callback.
+fn with_world<F, R>(lua: &Lua, f: F) -> LuaResult<R>
+where
+    F: FnOnce(&mut World) -> LuaResult<R>,
+{
+    let ptr = lua
+        .app_data_ref::<WorldRef>()
+        .ok_or_else(|| LuaError::RuntimeError("ECS world not available".into()))?
+        .0;
+    // SAFETY: `ScriptSystem` registers the WorldRef immediately before
+    // dispatching the callback and clears it afterwards, and does not touch the
+    // World while the callback runs. The pointer is valid for the call.
+    let world = unsafe { &mut *ptr };
+    f(world)
+}
+
+/// Mark that scripts mutated the world so `ScriptSystem` rebuilds geometry.
+fn mark_dirty(lua: &Lua) {
+    if let Some(m) = lua.app_data_ref::<ScriptMutations>() {
+        m.mark_dirty();
+    }
+}
+
+fn no_component(_: rust4d_core::hecs::ComponentError) -> LuaError {
+    LuaError::RuntimeError("entity does not have that component".into())
+}
+
+// === Component registry: spawn ===
+
+/// Build a component bundle from a Lua table of `{ name = value, ... }` and
+/// spawn it into the world. Returns the real `hecs::Entity`.
+fn spawn_from_table(world: &mut World, components: &LuaTable) -> LuaResult<Entity> {
+    let mut builder = EntityBuilder::new();
+    let mut had_transform = false;
+    let mut had_material = false;
+    let mut had_dirty = false;
+
+    for pair in components.pairs::<String, LuaValue>() {
+        let (name, value) = pair?;
+        match name.as_str() {
+            "name" => {
+                builder.add(Name(parse_name(&value)?));
+            }
+            "tags" => {
+                builder.add(parse_tags(&value)?);
+            }
+            "transform" => {
+                builder.add(parse_transform(&value)?);
+                had_transform = true;
+            }
+            "material" => {
+                builder.add(parse_material(&value)?);
+                had_material = true;
+            }
+            "dirty" | "dirty_flags" => {
+                builder.add(parse_dirty(&value)?);
+                had_dirty = true;
+            }
+            "shape" | "physics_body" | "parent" | "children" => {
+                log::warn!(
+                    "[ecs] world.spawn: component '{}' cannot be created from Lua; ignoring",
+                    name
+                );
+            }
+            other => {
+                log::warn!("[ecs] world.spawn: unknown component '{}'; ignoring", other);
+            }
+        }
+    }
+
+    // Default a newly-spawned renderable entity to dirty so the geometry cache
+    // rebuilds. Marker-only entities (no transform/material) default to NONE.
+    if !had_dirty {
+        builder.add(if had_transform || had_material {
+            DirtyFlags::ALL
+        } else {
+            DirtyFlags::NONE
+        });
+    }
+
+    Ok(world.spawn(builder.build()))
+}
+
+// === Component registry: get ===
+
+fn component_get(lua: &Lua, world: &mut World, entity: Entity, name: &str) -> LuaResult<LuaValue> {
+    if !world.contains(entity) {
+        return Ok(LuaValue::Nil);
+    }
+    let ecs = world.ecs();
+    match name {
+        "name" => {
+            let n = ecs.get::<&Name>(entity).map_err(no_component)?;
+            Ok(LuaValue::String(lua.create_string(n.0.as_bytes())?))
+        }
+        "tags" => {
+            let tags = ecs.get::<&Tags>(entity).map_err(no_component)?;
+            let table = lua.create_table()?;
+            for (i, tag) in tags.0.iter().enumerate() {
+                table.set(i + 1, lua.create_string(tag.as_bytes())?)?;
+            }
+            drop(tags);
+            Ok(LuaValue::Table(table))
+        }
+        "transform" => {
+            let t = *ecs.get::<&Transform4D>(entity).map_err(no_component)?;
+            LuaTransform4D {
+                position: t.position,
+                rotation: t.rotation,
+                scale: t.scale,
+            }
+            .into_lua(lua)
+        }
+        "material" => {
+            let m = ecs.get::<&Material>(entity).map_err(no_component)?;
+            let table = lua.create_table()?;
+            table.set(1, m.base_color[0])?;
+            table.set(2, m.base_color[1])?;
+            table.set(3, m.base_color[2])?;
+            table.set(4, m.base_color[3])?;
+            drop(m);
+            Ok(LuaValue::Table(table))
+        }
+        "dirty" | "dirty_flags" => {
+            let d = ecs.get::<&DirtyFlags>(entity).map_err(no_component)?;
+            let table = lua.create_table()?;
+            table.set("transform", d.contains(DirtyFlags::TRANSFORM))?;
+            table.set("mesh", d.contains(DirtyFlags::MESH))?;
+            table.set("material", d.contains(DirtyFlags::MATERIAL))?;
+            drop(d);
+            Ok(LuaValue::Table(table))
+        }
+        "shape" => {
+            let s = ecs.get::<&ShapeRef>(entity).map_err(no_component)?;
+            let table = lua.create_table()?;
+            table.set("vertex_count", s.as_shape().vertex_count() as i64)?;
+            drop(s);
+            Ok(LuaValue::Table(table))
+        }
+        "parent" => {
+            let p = ecs.get::<&Parent>(entity).map_err(no_component)?;
+            let entity = LuaEntity::from_entity(p.0);
+            drop(p);
+            entity.into_lua(lua)
+        }
+        "children" => {
+            let c = ecs.get::<&Children>(entity).map_err(no_component)?;
+            let table = lua.create_table()?;
+            for (i, child) in c.0.iter().enumerate() {
+                table.set(i + 1, LuaEntity::from_entity(*child))?;
+            }
+            drop(c);
+            Ok(LuaValue::Table(table))
+        }
+        "physics_body" => Ok(LuaValue::Nil),
+        other => Err(LuaError::RuntimeError(format!(
+            "unknown component '{}'. Valid: {:?}",
+            other, COMPONENT_NAMES
+        ))),
+    }
+}
+
+// === Component registry: set ===
+
+fn component_set(world: &mut World, entity: Entity, name: &str, value: LuaValue) -> LuaResult<()> {
+    if !world.contains(entity) {
+        return Err(LuaError::RuntimeError("entity is not alive".into()));
+    }
+    match name {
+        "name" => {
+            let new_name = match value {
+                LuaValue::String(s) => s.to_str()?.to_string(),
+                other => {
+                    return Err(LuaError::RuntimeError(format!(
+                        "name must be a string, got {}",
+                        other.type_name()
+                    )))
+                }
+            };
+            if world.rename_entity(entity, new_name).is_none() {
+                return Err(LuaError::RuntimeError(
+                    "entity has no Name component to rename".into(),
+                ));
+            }
+            Ok(())
+        }
+        "transform" => {
+            let t = parse_transform(&value)?;
+            let ecs = world.ecs_mut_unchecked();
+            let mut tx = ecs.get::<&mut Transform4D>(entity).map_err(no_component)?;
+            *tx = t;
+            drop(tx);
+            mark_transform_dirty(world, entity);
+            Ok(())
+        }
+        "material" => {
+            let m = parse_material(&value)?;
+            let ecs = world.ecs_mut_unchecked();
+            let mut mat = ecs.get::<&mut Material>(entity).map_err(no_component)?;
+            *mat = m;
+            drop(mat);
+            mark_dirty_flag(world, entity, DirtyFlags::MATERIAL);
+            Ok(())
+        }
+        "dirty" | "dirty_flags" => {
+            let d = parse_dirty(&value)?;
+            let ecs = world.ecs_mut_unchecked();
+            let mut flags = ecs.get::<&mut DirtyFlags>(entity).map_err(no_component)?;
+            *flags = d;
+            Ok(())
+        }
+        "tags" => Err(LuaError::RuntimeError(
+            "setting tags after spawn is not supported; spawn with tags instead".into(),
+        )),
+        "shape" | "physics_body" | "parent" | "children" => Err(LuaError::RuntimeError(format!(
+            "component '{}' cannot be set from Lua",
+            name
+        ))),
+        other => Err(LuaError::RuntimeError(format!(
+            "unknown component '{}'. Valid: {:?}",
+            other, COMPONENT_NAMES
+        ))),
+    }
+}
+
+/// Set the `TRANSFORM` dirty flag on an entity (so a geometry rebuild picks it
+/// up) without requiring the caller to hold a hecs borrow.
+fn mark_transform_dirty(world: &mut World, entity: Entity) {
+    mark_dirty_flag(world, entity, DirtyFlags::TRANSFORM);
+}
+
+fn mark_dirty_flag(world: &mut World, entity: Entity, flag: DirtyFlags) {
+    if let Ok(mut d) = world.ecs_mut_unchecked().get::<&mut DirtyFlags>(entity) {
+        *d |= flag;
+    }
+}
+
+// === Component registry: query ===
+
+/// Collect all entities that have the named component.
+fn collect_query(world: &mut World, component: &str) -> LuaResult<Vec<Entity>> {
+    let ecs = world.ecs();
+    let entities: Vec<Entity> = match component {
+        "name" => ecs.query::<&Name>().iter().map(|(e, _)| e).collect(),
+        "tags" => ecs.query::<&Tags>().iter().map(|(e, _)| e).collect(),
+        "transform" => ecs.query::<&Transform4D>().iter().map(|(e, _)| e).collect(),
+        "material" => ecs.query::<&Material>().iter().map(|(e, _)| e).collect(),
+        "dirty" | "dirty_flags" => ecs.query::<&DirtyFlags>().iter().map(|(e, _)| e).collect(),
+        "shape" => ecs.query::<&ShapeRef>().iter().map(|(e, _)| e).collect(),
+        "physics_body" => ecs.query::<&PhysicsBody>().iter().map(|(e, _)| e).collect(),
+        "parent" => ecs.query::<&Parent>().iter().map(|(e, _)| e).collect(),
+        "children" => ecs.query::<&Children>().iter().map(|(e, _)| e).collect(),
+        other => {
+            return Err(LuaError::RuntimeError(format!(
+                "unknown component '{}'. Valid: {:?}",
+                other, COMPONENT_NAMES
+            )))
+        }
+    };
+    Ok(entities)
+}
+
+// === Parsers (Lua value -> Rust component) ===
+
+fn parse_name(value: &LuaValue) -> LuaResult<String> {
+    match value {
+        LuaValue::String(s) => Ok(s.to_str()?.to_string()),
+        other => Err(LuaError::RuntimeError(format!(
+            "name must be a string, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_tags(value: &LuaValue) -> LuaResult<Tags> {
+    match value {
+        LuaValue::Table(t) => {
+            let mut set = HashSet::new();
+            for entry in t.sequence_values::<LuaString>() {
+                let s = entry?;
+                set.insert(s.to_str()?.to_string());
+            }
+            Ok(Tags(set))
+        }
+        LuaValue::Nil => Ok(Tags::new()),
+        other => Err(LuaError::RuntimeError(format!(
+            "tags must be a table of strings, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_transform(value: &LuaValue) -> LuaResult<Transform4D> {
+    match value {
+        LuaValue::UserData(ud) => {
+            let lt = ud.borrow::<LuaTransform4D>()?;
+            Ok(Transform4D {
+                position: lt.position,
+                rotation: lt.rotation,
+                scale: lt.scale,
+            })
+        }
+        LuaValue::Table(t) => {
+            // Accept {x=,y=,z=,w=} for position, optional scale= and rotation=.
+            if t.contains_key("x")? || t.contains_key("y")? {
+                let x: f32 = t.get("x").unwrap_or(0.0);
+                let y: f32 = t.get("y").unwrap_or(0.0);
+                let z: f32 = t.get("z").unwrap_or(0.0);
+                let w: f32 = t.get("w").unwrap_or(0.0);
+                let scale: f32 = t.get("scale").unwrap_or(1.0);
+                let rotation = match t.get::<LuaValue>("rotation") {
+                    Ok(LuaValue::UserData(ud)) => ud.borrow::<LuaRotor4>()?.0,
+                    _ => Rotor4::IDENTITY,
+                };
+                Ok(Transform4D {
+                    position: rust4d_math::Vec4::new(x, y, z, w),
+                    rotation,
+                    scale,
+                })
+            } else if t.contains_key("position")? {
+                let pos = parse_vec4_table(&t.get::<LuaTable>("position")?)?;
+                let scale: f32 = t.get("scale").unwrap_or(1.0);
+                let rotation = match t.get::<LuaValue>("rotation") {
+                    Ok(LuaValue::UserData(ud)) => ud.borrow::<LuaRotor4>()?.0,
+                    _ => Rotor4::IDENTITY,
+                };
+                Ok(Transform4D {
+                    position: pos,
+                    rotation,
+                    scale,
+                })
+            } else {
+                // Bare array {x, y, z, w}
+                let x: f32 = t.get(1).unwrap_or(0.0);
+                let y: f32 = t.get(2).unwrap_or(0.0);
+                let z: f32 = t.get(3).unwrap_or(0.0);
+                let w: f32 = t.get(4).unwrap_or(0.0);
+                Ok(Transform4D::from_position(rust4d_math::Vec4::new(
+                    x, y, z, w,
+                )))
+            }
+        }
+        other => Err(LuaError::RuntimeError(format!(
+            "transform must be a Transform4D or table, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_vec4_table(t: &LuaTable) -> LuaResult<rust4d_math::Vec4> {
+    if t.contains_key("x")? {
+        let x: f32 = t.get("x").unwrap_or(0.0);
+        let y: f32 = t.get("y").unwrap_or(0.0);
+        let z: f32 = t.get("z").unwrap_or(0.0);
+        let w: f32 = t.get("w").unwrap_or(0.0);
+        Ok(rust4d_math::Vec4::new(x, y, z, w))
+    } else {
+        let x: f32 = t.get(1).unwrap_or(0.0);
+        let y: f32 = t.get(2).unwrap_or(0.0);
+        let z: f32 = t.get(3).unwrap_or(0.0);
+        let w: f32 = t.get(4).unwrap_or(0.0);
+        Ok(rust4d_math::Vec4::new(x, y, z, w))
+    }
+}
+
+fn parse_material(value: &LuaValue) -> LuaResult<Material> {
+    match value {
+        LuaValue::Table(t) => {
+            let [r, g, b, a] = parse_color(t)?;
+            Ok(Material::new(r, g, b, a))
+        }
+        other => Err(LuaError::RuntimeError(format!(
+            "material must be a color table, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Parse an RGBA color from a Lua table (array `{r,g,b,a}` or named `{r=,g=,b=,a=}`).
+fn parse_color(t: &LuaTable) -> LuaResult<[f32; 4]> {
+    if t.contains_key("r")? {
+        let r: f32 = t.get("r").unwrap_or(0.0);
+        let g: f32 = t.get("g").unwrap_or(0.0);
+        let b: f32 = t.get("b").unwrap_or(0.0);
+        let a: f32 = t.get("a").unwrap_or(1.0);
+        Ok([r, g, b, a])
+    } else {
+        let r: f32 = t.get(1).unwrap_or(0.0);
+        let g: f32 = t.get(2).unwrap_or(0.0);
+        let b: f32 = t.get(3).unwrap_or(0.0);
+        let a: f32 = t.get(4).unwrap_or(1.0);
+        Ok([r, g, b, a])
+    }
+}
+
+fn parse_dirty(value: &LuaValue) -> LuaResult<DirtyFlags> {
+    match value {
+        LuaValue::Boolean(true) => Ok(DirtyFlags::ALL),
+        LuaValue::Boolean(false) => Ok(DirtyFlags::NONE),
+        LuaValue::Integer(n) => Ok(DirtyFlags::from_bits_truncate(*n as u8)),
+        LuaValue::Number(n) => Ok(DirtyFlags::from_bits_truncate(*n as u8)),
+        LuaValue::Table(t) => {
+            let mut flags = DirtyFlags::NONE;
+            if t.get::<bool>("transform").unwrap_or(false) {
+                flags |= DirtyFlags::TRANSFORM;
+            }
+            if t.get::<bool>("mesh").unwrap_or(false) {
+                flags |= DirtyFlags::MESH;
+            }
+            if t.get::<bool>("material").unwrap_or(false) {
+                flags |= DirtyFlags::MATERIAL;
+            }
+            Ok(flags)
+        }
+        LuaValue::Nil => Ok(DirtyFlags::ALL),
+        other => Err(LuaError::RuntimeError(format!(
+            "dirty must be a bool, number, or table, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Register ECS bindings with the Lua VM.
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let world_table = lua.create_table()?;
 
     // world.spawn(components) -> LuaEntity
-    // Creates a new entity with the given components.
-    //
-    // # Stub Behavior (MEDIUM-8)
-    //
-    // Returns entities with incrementing fake IDs (starting at 1). While these
-    // are not real hecs::World entities, they have unique IDs allowing proper
-    // entity comparison in scripts. The entity will report id() correctly but
-    // get/set operations are no-ops.
-    //
-    // WARNING: Do not rely on these entities persisting across script reloads
-    // or for actual game logic. This stub exists only to allow scripts to run
-    // without errors during development.
     world_table.set(
         "spawn",
-        lua.create_function(|_, components: LuaTable| {
-            // Log warning only on first spawn (LOW-6)
-            if !ECS_WARNED.swap(true, Ordering::Relaxed) {
-                log::warn!(
-                    "[ecs] hecs::World not connected - entity operations are stubs. \
-                     Spawned entities have fake IDs and get/set are no-ops."
-                );
-            }
-
-            let count = components.len().unwrap_or(0);
-
-            // Log component names at trace level (LOW-6)
-            log::trace!("[ecs] world.spawn() called with {} components", count);
-            for pair in components.pairs::<String, LuaValue>().flatten() {
-                log::trace!("[ecs]   component: {}", pair.0);
-            }
-
-            let fake_id = STUB_ENTITY_COUNTER.fetch_add(1, Ordering::Relaxed);
-            LuaEntity::stub(fake_id)
+        lua.create_function(|lua, components: LuaTable| {
+            let entity = with_world(lua, |world| spawn_from_table(world, &components))?;
+            mark_dirty(lua);
+            Ok(LuaEntity::from_entity(entity))
         })?,
     )?;
 
-    // world.query(component_name) -> iterator function
-    // Returns an iterator over entities with the given component.
-    //
-    // # Stub Behavior (LOW-15)
-    //
-    // Returns an empty iterator (a closure that immediately returns nil).
-    // This is correct for stub mode since no entities actually exist.
-    //
-    // # Efficiency Note for Future Implementation
-    //
-    // When implementing real ECS integration, consider:
-    // - The current closure-based iterator pattern works but creates a new
-    //   Lua function per call
-    // - For high-frequency queries, consider caching the iterator function
-    //   or using Lua coroutines for better performance
-    // - The real hecs::World query would need unsafe app_data access and
-    //   proper lifetime management
+    // world.query(component_name) -> iterator function yielding LuaEntity
     world_table.set(
         "query",
         lua.create_function(|lua, component: String| {
-            if !ECS_WARNED.swap(true, Ordering::Relaxed) {
-                log::warn!("[ecs] hecs::World not connected - entity operations are stubs.");
-            }
-
-            log::trace!("[ecs] query called for component: {}", component);
-
-            // Return an empty iterator function
-            // Real implementation would iterate over hecs::World query results
-            let empty_iter =
-                lua.create_function(|_, ()| -> LuaResult<Option<LuaEntity>> { Ok(None) })?;
-            Ok(empty_iter)
+            let entities = with_world(lua, |world| collect_query(world, &component))?;
+            let index = Rc::new(std::cell::Cell::new(0usize));
+            let entities = Rc::new(entities);
+            let iter = lua.create_function(move |_, ()| {
+                let i = index.get();
+                if i >= entities.len() {
+                    Ok(Option::<LuaEntity>::None)
+                } else {
+                    index.set(i + 1);
+                    Ok(Some(LuaEntity::from_entity(entities[i])))
+                }
+            })?;
+            Ok(iter)
         })?,
     )?;
 
     // world.find_by_name(name) -> LuaEntity or nil
-    // Finds an entity by its "name" component.
-    // Stub: Always returns nil.
     world_table.set(
         "find_by_name",
-        lua.create_function(|_, name: String| {
-            if !ECS_WARNED.swap(true, Ordering::Relaxed) {
-                log::warn!("[ecs] hecs::World not connected - entity operations are stubs.");
-            }
-            log::trace!("[ecs] find_by_name called: {}", name);
-            // Real implementation would query World for entity with matching Name component
-            Ok(Option::<LuaEntity>::None)
+        lua.create_function(|lua, name: String| {
+            with_world(lua, |world| {
+                Ok(world.get_by_name(&name).map(LuaEntity::from_entity))
+            })
         })?,
     )?;
 
     // world.entity_from_bits(bits) -> LuaEntity or nil
-    // Reconstructs an entity handle from `entity:to_bits()`. This is already
-    // the real hecs handle format, so once a World bridge exists scripts do
-    // not need a migration.
     world_table.set(
         "entity_from_bits",
         lua.create_function(|_, bits: u64| Ok(LuaEntity::from_bits(bits)))?,
     )?;
 
-    // world.despawn(entity)
-    // Removes an entity from the world.
-    // Stub: No-op, just logs.
+    // world.despawn(entity) -> bool
     world_table.set(
         "despawn",
-        lua.create_function(|_, entity: LuaAnyUserData| {
-            if let Ok(lua_entity) = entity.borrow::<LuaEntity>() {
-                log::trace!("[ecs] despawn called for entity {:?}", lua_entity.0);
+        lua.create_function(|lua, entity: LuaEntity| {
+            let removed = with_world(lua, |world| Ok(world.despawn(entity.0)))?;
+            if removed {
+                mark_dirty(lua);
             }
-            Ok(())
+            Ok(removed)
         })?,
     )?;
 
     // world.entity_count() -> u64
-    // Returns the number of entities in the world.
-    // Stub: Always returns 0.
     world_table.set(
         "entity_count",
-        lua.create_function(|_, ()| {
-            log::trace!("[ecs] entity_count called");
-            Ok(0u64)
+        lua.create_function(|lua, ()| with_world(lua, |world| Ok(world.entity_count() as u64)))?,
+    )?;
+
+    // world.contains(entity) -> bool
+    world_table.set(
+        "contains",
+        lua.create_function(|lua, entity: LuaEntity| {
+            with_world(lua, |world| Ok(world.contains(entity.0)))
         })?,
     )?;
 
-    // Register the world table as a global
     lua.globals().set("world", world_table)?;
 
-    log::debug!("[ecs] ECS bindings registered");
+    log::debug!("[ecs] ECS bindings registered (live hecs bridge)");
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bindings::math;
+    use crate::context::{ScriptMutations, WorldRef};
+    use rust4d_core::World;
 
-    fn create_lua_with_ecs() -> Lua {
+    /// Register ecs + math bindings on a fresh Lua.
+    fn lua_with_bindings() -> Lua {
         let lua = Lua::new();
-        register(&lua).expect("Failed to register ECS bindings");
+        math::register(&lua).unwrap();
+        register(&lua).unwrap();
         lua
     }
 
-    #[test]
-    fn test_world_table_exists() {
-        let lua = create_lua_with_ecs();
-        let world: LuaTable = lua
-            .globals()
-            .get("world")
-            .expect("world table should exist");
-        assert!(world.contains_key("spawn").unwrap());
-        assert!(world.contains_key("query").unwrap());
-        assert!(world.contains_key("find_by_name").unwrap());
-        assert!(world.contains_key("despawn").unwrap());
-        assert!(world.contains_key("entity_from_bits").unwrap());
-        assert!(world.contains_key("entity_count").unwrap());
+    /// Register a WorldRef + fresh ScriptMutations for the duration of a Lua
+    /// snippet, then clear them so the caller may inspect `world` afterwards.
+    fn run_with_world(lua: &Lua, world: &mut World, code: &str) {
+        lua.set_app_data(WorldRef::new(world));
+        lua.set_app_data(ScriptMutations::default());
+        lua.load(code).exec().unwrap();
+        lua.remove_app_data::<ScriptMutations>();
+        lua.remove_app_data::<WorldRef>();
     }
 
     #[test]
-    fn test_spawn_returns_entity() {
-        let lua = create_lua_with_ecs();
-        let result: LuaResult<LuaAnyUserData> = lua
-            .load(
-                r#"
-            return world.spawn({ name = "test" })
+    fn test_spawn_creates_real_entity() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            e = world.spawn({ name = "foo", transform = { x = 1, y = 2, z = 3, w = 4 } })
+            assert(e ~= nil)
+            assert(e:id() >= 0)
         "#,
-            )
-            .eval();
-        assert!(result.is_ok(), "spawn should return a LuaEntity userdata");
+        );
+        assert_eq!(world.entity_count(), 1);
+        assert!(world.get_by_name("foo").is_some());
     }
 
     #[test]
-    fn test_spawn_with_multiple_components() {
-        let lua = create_lua_with_ecs();
-        let result: LuaResult<LuaAnyUserData> = lua
-            .load(
-                r#"
-            return world.spawn({
-                transform = { x = 1, y = 2, z = 3, w = 4 },
-                name = "player",
-                health = 100
-            })
+    fn test_find_by_name() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            world.spawn({ name = "alpha" })
+            world.spawn({ name = "beta" })
+            local e = world.find_by_name("beta")
+            assert(e ~= nil, "find_by_name should find beta")
+            missing = world.find_by_name("nope")
         "#,
-            )
-            .eval();
-        assert!(result.is_ok());
+        );
+        assert!(lua.load("return missing == nil").eval::<bool>().unwrap());
     }
 
     #[test]
-    fn test_entity_has_id_method() {
-        let lua = create_lua_with_ecs();
-        let id: u64 = lua
-            .load(
-                r#"
-            local e = world.spawn({})
-            return e:id()
-        "#,
-            )
-            .eval()
-            .expect("id() should return a number");
-        // Stub entities now have incrementing IDs starting from 1
-        assert!(id > 0, "entity id should be positive");
-    }
-
-    #[test]
-    fn test_entity_has_to_bits_method() {
-        let lua = create_lua_with_ecs();
-        // Lua numbers are f64, so large u64 values lose precision.
-        // Just verify it returns a number and doesn't error.
-        let bits: f64 = lua
-            .load(
-                r#"
-            local e = world.spawn({})
-            return e:to_bits()
-        "#,
-            )
-            .eval()
-            .expect("to_bits() should return a number");
-        // Stub entities have incrementing IDs so bits will be positive
-        assert!(bits > 0.0, "to_bits() should return non-zero");
-    }
-
-    #[test]
-    fn test_entity_get_returns_nil() {
-        let lua = create_lua_with_ecs();
-        let result: LuaValue = lua
-            .load(
-                r#"
-            local e = world.spawn({})
-            return e:get("transform")
-        "#,
-            )
-            .eval()
-            .expect("get() should not error");
-        assert!(result.is_nil(), "stub get() should return nil");
-    }
-
-    #[test]
-    fn test_entity_set_does_not_error() {
-        let lua = create_lua_with_ecs();
-        let result: LuaResult<()> = lua
-            .load(
-                r#"
-            local e = world.spawn({})
-            e:set("transform", { x = 1, y = 2, z = 3, w = 4 })
-        "#,
-            )
-            .eval();
-        assert!(result.is_ok(), "set() should not error");
-    }
-
-    #[test]
-    fn test_entity_is_alive() {
-        let lua = create_lua_with_ecs();
-        let alive: bool = lua
-            .load(
-                r#"
-            local e = world.spawn({})
-            return e:is_alive()
-        "#,
-            )
-            .eval()
-            .expect("is_alive() should return a boolean");
-        assert!(alive, "stub is_alive() should return true");
-    }
-
-    #[test]
-    fn test_query_returns_iterator() {
-        let lua = create_lua_with_ecs();
-        let count: i32 = lua
-            .load(
-                r#"
-            local count = 0
-            for entity in world.query("transform") do
+    fn test_query_yields_entities() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        // Seed a transform-bearing entity from Rust.
+        world.spawn((Transform4D::identity(), DirtyFlags::NONE));
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            world.spawn({ transform = { x = 1, y = 0, z = 0, w = 0 } })
+            count = 0
+            for _ in world.query("transform") do
                 count = count + 1
             end
-            return count
         "#,
-            )
-            .eval()
-            .expect("query iteration should work");
-        assert_eq!(count, 0, "empty iterator should return nothing");
+        );
+        let count: i64 = lua.load("return count").eval().unwrap();
+        assert_eq!(count, 2);
     }
 
     #[test]
-    fn test_find_by_name_returns_nil_when_not_found() {
-        let lua = create_lua_with_ecs();
-        let result: LuaValue = lua
-            .load(
-                r#"
-            return world.find_by_name("nonexistent")
+    fn test_get_set_transform_round_trip() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            e = world.spawn({ transform = { x = 0, y = 0, z = 0, w = 0 } })
+            e:set("transform", { x = 5, y = 6, z = 7, w = 8 })
+            t = e:get("transform")
+            assert(t.position.x == 5, "x should be 5")
+            assert(t.position.w == 8, "w should be 8")
         "#,
-            )
-            .eval()
-            .expect("find_by_name should not error");
-        assert!(result.is_nil(), "stub find_by_name should return nil");
+        );
+        // Verify from Rust that the transform actually changed.
+        let e = world
+            .get_by_name("")
+            .or(world.root_entities().first().copied());
+        let _ = e;
+        let entity = world.root_entities().pop().unwrap();
+        let t = world.ecs().get::<&Transform4D>(entity).unwrap();
+        assert_eq!(t.position.x, 5.0);
+        assert_eq!(t.position.w, 8.0);
     }
 
     #[test]
-    fn test_despawn_does_not_error() {
-        let lua = create_lua_with_ecs();
-        let result: LuaResult<()> = lua
-            .load(
-                r#"
-            local e = world.spawn({})
+    fn test_set_material_and_get() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            e = world.spawn({ material = { 1, 0, 0, 1 } })
+            m = e:get("material")
+            assert(m[1] == 1.0)
+            assert(m[2] == 0.0)
+            e:set("material", { r = 0, g = 1, b = 0, a = 1 })
+            m2 = e:get("material")
+            assert(m2[2] == 1.0, "green should be 1 after set")
+        "#,
+        );
+    }
+
+    #[test]
+    fn test_despawn_removes_entity() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            e = world.spawn({ name = "temp" })
+            removed = world.despawn(e)
+            assert(removed, "despawn should return true")
+            assert(world.find_by_name("temp") == nil)
+        "#,
+        );
+        assert_eq!(world.entity_count(), 0);
+    }
+
+    #[test]
+    fn test_entity_count() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            world.spawn({ name = "a" })
+            world.spawn({ name = "b" })
+            n = world.entity_count()
+        "#,
+        );
+        let n: i64 = lua.load("return n").eval().unwrap();
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn test_is_alive() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
+            r#"
+            e = world.spawn({ name = "x" })
+            alive_before = e:is_alive()
             world.despawn(e)
+            alive_after = e:is_alive()
         "#,
-            )
-            .eval();
-        assert!(result.is_ok(), "despawn should not error");
+        );
+        assert!(lua.load("return alive_before").eval::<bool>().unwrap());
+        assert!(!lua.load("return alive_after").eval::<bool>().unwrap());
     }
 
     #[test]
-    fn test_entity_count_returns_zero() {
-        let lua = create_lua_with_ecs();
-        let count: u64 = lua
-            .load(
-                r#"
-            return world.entity_count()
-        "#,
-            )
-            .eval()
-            .expect("entity_count should return a number");
-        assert_eq!(count, 0, "stub entity_count should return 0");
-    }
-
-    #[test]
-    fn test_lua_entity_userdata_debug() {
-        // Test that LuaEntity can be created directly and has expected properties
-        // hecs Entity bits: high 32 bits = generation (must be non-zero), low 32 bits = id
-        let generation: u64 = 1;
-        let id: u64 = 42;
-        let bits = (generation << 32) | id;
-        let entity = LuaEntity::from_bits(bits).expect("should create entity from valid bits");
-        // Entity created with id 42 should have id 42
-        assert_eq!(entity.0.id(), 42);
-        // to_bits returns a non-zero value
-        assert!(entity.0.to_bits().get() > 0);
-    }
-
-    #[test]
-    fn test_entity_from_bits_round_trip() {
-        let lua = create_lua_with_ecs();
-        lua.load(
+    fn test_entity_bits_round_trip() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
             r#"
-            local e1 = world.spawn({ name = "roundtrip" })
-            local bits = e1:to_bits()
-            local e2 = world.entity_from_bits(bits)
-            assert(e2 ~= nil, "entity_from_bits should reconstruct handle")
-            assert(e1:equals(e2), "round-tripped handle should compare equal")
-            assert(e1:id() == e2:id(), "round-tripped handle should keep id")
+            e = world.spawn({ name = "rt" })
+            bits = e:to_bits()
+            e2 = world.entity_from_bits(bits)
+            assert(e2 ~= nil)
+            assert(e:equals(e2))
         "#,
-        )
-        .exec()
-        .expect("entity handles should round-trip through bits");
+        );
     }
 
     #[test]
-    fn test_entity_from_bits_rejects_zero() {
-        let lua = create_lua_with_ecs();
-        let result: LuaValue = lua
-            .load("return world.entity_from_bits(0)")
-            .eval()
-            .expect("entity_from_bits should not error on invalid bits");
-        assert!(result.is_nil());
-    }
-
-    #[test]
-    fn test_spawned_entities_have_unique_ids() {
-        // Test that multiple spawned entities get unique IDs (MEDIUM-8 fix)
-        let lua = create_lua_with_ecs();
-        lua.load(
+    fn test_unknown_component_errors() {
+        let lua = lua_with_bindings();
+        let mut world = World::new();
+        run_with_world(
+            &lua,
+            &mut world,
             r#"
-            local e1 = world.spawn({ name = "entity1" })
-            local e2 = world.spawn({ name = "entity2" })
-            local e3 = world.spawn({ name = "entity3" })
-
-            -- Each entity should have a different ID
-            assert(e1:id() ~= e2:id(), "e1 and e2 should have different IDs")
-            assert(e2:id() ~= e3:id(), "e2 and e3 should have different IDs")
-            assert(e1:id() ~= e3:id(), "e1 and e3 should have different IDs")
+            e = world.spawn({ name = "u" })
+            ok, err = pcall(function() e:get("nope") end)
+            assert(not ok, "get on unknown component should error")
         "#,
-        )
-        .exec()
-        .expect("spawned entities should have unique IDs");
+        );
+        let ok: bool = lua.load("return ok").eval().unwrap();
+        assert!(!ok);
+    }
+
+    #[test]
+    fn test_spawn_without_world_errors() {
+        let lua = lua_with_bindings();
+        // No WorldRef registered.
+        let result: LuaResult<()> = lua.load("world.spawn({ name = 'x' })").eval();
+        assert!(result.is_err(), "spawn without a world should error");
     }
 }

@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-mlua = { version = "0.10", features = ["lua54", "vendored", "send"] }
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 log = "0.4"
 rust4d_core = { path = "../rust4d_core" }
 rust4d_math = { path = "../rust4d_math" }
 rust4d_physics = { path = "../rust4d_physics" }
+rust4d_audio = { path = "../rust4d_audio" }
 notify = { version = "7.0", optional = true }
 
 [features]

@@ -10,16 +10,25 @@ use winit::{
     window::WindowId,
 };
 
-use rust4d::input::{InputAction, InputMapper};
-use rust4d::systems::{build_geometry, RenderError, RenderSystem, SimulationSystem, WindowSystem};
+use rust4d::input::{
+    camera_action_name, keycode_to_name, mouse_button_to_name, InputAction, InputMapper,
+};
+use rust4d::systems::{
+    build_geometry, RenderError, RenderSystem, ScriptSystem, ScriptUpdateResult, SimulationSystem,
+    WindowSystem,
+};
 
 use rust4d_core::SceneManager;
 use rust4d_game::{scene_helpers, CharacterConfig, CharacterController4D};
 use rust4d_input::CameraController;
 use rust4d_math::Vec4;
 use rust4d_render::{camera4d::Camera4D, RenderableGeometry};
+use rust4d_scripting::InputSnapshot;
 
 use rust4d::config::AppConfig;
+
+use std::collections::HashSet;
+use winit::keyboard::KeyCode;
 
 /// Main application state
 struct App {
@@ -39,15 +48,29 @@ struct App {
     character: Option<CharacterController4D>,
     /// Simulation system for game loop
     simulation: SimulationSystem,
+    /// Scripting + audio system (Lua lifecycle + optional audio engine)
+    script_system: ScriptSystem,
+    /// Per-frame input snapshot fed to Lua `input` bindings
+    input_snapshot: InputSnapshot,
+    /// Pressed key codes (for action-map derivation in the input snapshot)
+    pressed_keycodes: HashSet<KeyCode>,
+    /// Whether on_init has fired for the script system
+    scripts_inited: bool,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(game_override: Option<String>) -> Self {
         // Load configuration
-        let config = AppConfig::load().unwrap_or_else(|e| {
+        let mut config = AppConfig::load().unwrap_or_else(|e| {
             log::warn!("Failed to load config: {}. Using defaults.", e);
             AppConfig::default()
         });
+
+        // `--game <dir>` CLI override takes precedence over config
+        if let Some(dir) = game_override {
+            log::info!("--game override: '{}'", dir);
+            config.game.game_dir = dir;
+        }
 
         // Create scene manager and load scene from file
         // Pass physics config from TOML to the physics engine
@@ -144,6 +167,15 @@ impl App {
                 )
             });
 
+        // Scripting + audio system. Constructed from game/audio/physics config.
+        // Scripting degrades to disabled when game_dir is empty; audio degrades
+        // to silent when no device is available.
+        let script_system = ScriptSystem::new(
+            &config.game,
+            &config.audio,
+            &config.physics.to_physics_config(),
+        );
+
         Self {
             config,
             window_system: None,
@@ -154,6 +186,36 @@ impl App {
             controller,
             character,
             simulation: SimulationSystem::new(),
+            script_system,
+            input_snapshot: InputSnapshot::new(),
+            pressed_keycodes: HashSet::new(),
+            scripts_inited: false,
+        }
+    }
+
+    /// Recompute the `actions` map in the input snapshot from the held key
+    /// codes and the camera controller's action map.
+    fn recompute_input_actions(&mut self) {
+        let bindings = self.controller.action_map().bindings();
+        for &(key, action) in bindings {
+            let value = if self.pressed_keycodes.contains(&key) {
+                1.0
+            } else {
+                0.0
+            };
+            self.input_snapshot
+                .set_action(camera_action_name(action), value);
+        }
+    }
+
+    /// Mark actions bound to `key` as just-pressed this frame (rising edge).
+    fn mark_actions_just_pressed(&mut self, key: KeyCode) {
+        let bindings = self.controller.action_map().bindings();
+        for &(bound_key, action) in bindings {
+            if bound_key == key {
+                self.input_snapshot
+                    .mark_action_just_pressed(camera_action_name(action));
+            }
         }
     }
 }
@@ -178,12 +240,26 @@ impl ApplicationHandler for App {
 
             self.window_system = Some(window_system);
             self.render_system = Some(render_system);
+
+            // Fire on_init once the window/render surface is ready.
+            if !self.scripts_inited {
+                self.scripts_inited = true;
+                let player = self.camera.position;
+                if let Some(world) = self.scene_manager.active_world_mut() {
+                    if let Err(e) = self.script_system.init(world, player) {
+                        log::error!("[script] on_init error: {}", e);
+                    }
+                }
+            }
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
+                if let Err(e) = self.script_system.shutdown() {
+                    log::error!("[script] on_shutdown error: {}", e);
+                }
                 event_loop.exit();
             }
 
@@ -195,6 +271,20 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(key) = event.physical_key {
+                    // Track key state for the Lua input snapshot.
+                    let pressed = event.state == winit::event::ElementState::Pressed;
+                    if let Some(name) = keycode_to_name(key) {
+                        if pressed {
+                            self.pressed_keycodes.insert(key);
+                            self.input_snapshot.press_key(name);
+                            self.mark_actions_just_pressed(key);
+                        } else {
+                            self.pressed_keycodes.remove(&key);
+                            self.input_snapshot.release_key(name);
+                        }
+                        self.recompute_input_actions();
+                    }
+
                     // Map to action via InputMapper
                     let cursor_captured = self
                         .window_system
@@ -240,6 +330,15 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
+                // Track mouse button state for the Lua input snapshot.
+                if let Some(name) = mouse_button_to_name(button) {
+                    if state == winit::event::ElementState::Pressed {
+                        self.input_snapshot.press_mouse(name);
+                    } else {
+                        self.input_snapshot.release_mouse(name);
+                    }
+                }
+
                 // Map to action via InputMapper
                 let cursor_captured = self
                     .window_system
@@ -268,6 +367,27 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
+                // Run scripting BEFORE simulation so scripts can set
+                // velocities/transforms before physics steps.
+                let listener_pos = self.camera.position;
+                let script_result = {
+                    let world = self.scene_manager.active_world_mut();
+                    if let Some(world) = world {
+                        match self
+                            .script_system
+                            .update(world, &self.input_snapshot, listener_pos)
+                        {
+                            Ok(r) => r,
+                            Err(e) => {
+                                log::error!("[script] update error: {}", e);
+                                ScriptUpdateResult::default()
+                            }
+                        }
+                    } else {
+                        ScriptUpdateResult::default()
+                    }
+                };
+
                 // Run simulation
                 let cursor_captured = self
                     .window_system
@@ -283,8 +403,9 @@ impl ApplicationHandler for App {
                     cursor_captured,
                 );
 
-                // Rebuild geometry if entities changed
-                if result.geometry_dirty {
+                // Rebuild geometry if entities changed (scripts or physics)
+                let geometry_dirty = script_result.geometry_dirty || result.geometry_dirty;
+                if geometry_dirty {
                     self.geometry = build_geometry(self.scene_manager.active_world().unwrap());
                     if let Some(rs) = &mut self.render_system {
                         rs.upload_geometry(&self.geometry);
@@ -293,6 +414,9 @@ impl ApplicationHandler for App {
                         w.clear_all_dirty();
                     }
                 }
+
+                // Clear per-frame input edges now that scripts have consumed them.
+                self.input_snapshot.end_frame();
 
                 // Update window title with debug info
                 if let Some(ws) = &self.window_system {
@@ -336,8 +460,23 @@ impl ApplicationHandler for App {
     ) {
         if let DeviceEvent::MouseMotion { delta } = event {
             self.controller.process_mouse_motion(delta.0, delta.1);
+            self.input_snapshot
+                .add_mouse_motion(delta.0 as f32, delta.1 as f32);
         }
     }
+}
+
+/// Parse `--game <dir>` from CLI args. Returns the directory if present.
+fn parse_game_arg() -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--game" {
+            return args.next();
+        } else if let Some(rest) = arg.strip_prefix("--game=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
 }
 
 fn main() {
@@ -350,6 +489,6 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     // Create and run application
-    let mut app = App::new();
+    let mut app = App::new(parse_game_arg());
     event_loop.run_app(&mut app).expect("Event loop error");
 }
