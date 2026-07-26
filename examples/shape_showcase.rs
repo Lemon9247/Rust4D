@@ -85,15 +85,13 @@ impl HeadlessGpu {
             info.name, info.device_type, info.backend
         );
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("Shape Showcase Headless Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Shape Showcase Headless Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::Off,
+        }))
         .expect("failed to create device");
 
         let slice_pipeline = SlicePipeline::new(&device, MAX_TRIANGLES);
@@ -242,7 +240,7 @@ impl HeadlessGpu {
         let slice = self.readback_buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait);
         rx.recv().unwrap().expect("readback map failed");
 
         {
@@ -277,7 +275,7 @@ impl HeadlessGpu {
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait);
         rx.recv().unwrap().expect("counter map failed");
         let count = {
             let data = slice.get_mapped_range();

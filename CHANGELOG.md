@@ -51,6 +51,12 @@ Conventional Commits.
 - Workspace is now `rustfmt` clean.
 - Rendering disables back-face culling because slice-generated triangle winding
   is not stable across all marching-tetrahedra cases.
+- Bumped `wgpu` 24 -> 25 (and `egui` / `egui-wgpu` / `egui-winit` 0.31 ->
+  0.32, since egui-wgpu 0.31 pins wgpu 24). API fixes: `request_device` now
+  takes a single `DeviceDescriptor` argument (the trace path moved into the
+  descriptor's new `trace: Trace` field), and `device.poll(Maintain::Wait)` is
+  now `device.poll(PollType::Wait)` (poll returns `Result<PollStatus,
+  PollError>`). All examples and the render context updated.
 
 ### Fixed
 
