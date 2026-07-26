@@ -86,6 +86,12 @@ cargo run --release
 
 # Or try an example
 cargo run --example 01_hello_tesseract
+
+# Run the Lua demo game (Wave 5): a scripted 4D gallery with a trigger zone,
+# HUD, spatial audio cue, and tweens — no compiled game code.
+R4D_SCENE__PATH=games/demo/scenes/demo.ron cargo run -- --game games/demo
+# Headless smoke for the demo (no window/GPU/audio):
+cargo run --example demo_smoke
 ```
 
 On NixOS (or with Nix installed), use the dev shell — it provides the Rust

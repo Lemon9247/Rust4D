@@ -43,6 +43,9 @@ Conventional Commits.
 - Project skills for 4D geometry, headless visual verification, and production
   readiness.
 - Shape catalog documentation (`docs/shapes.md`).
+- **Wave 5 — scripting + audio integration:** `ScriptSystem` (`src/systems/script.rs`) owns a `ScriptEngine` and an optional `AudioEngine4D`, drives `on_init` / `on_update` / `on_fixed_update` / `on_shutdown` from the app loop, and runs a fixed-step accumulator. `update` runs before `SimulationSystem` so scripts set velocities/transforms before physics. `AppConfig` gains `GameConfig` + `AudioConfig`; `--game <dir>` overrides the game directory. Audio and scripting both degrade gracefully (silent / disabled) when no device / no game dir is configured.
+- **Wave 5 — real Lua ECS bridge:** `world.spawn` / `query` / `find_by_name` / `get` / `set` / `despawn` / `entity_count` operate on the live `hecs::World` via a per-call `WorldRef` registered into `app_data` for the duration of each callback. Component access dispatches through an explicit name registry (`name` / `tags` / `transform` / `material` / `dirty` / `shape` / `physics_body` / `parent` / `children`). Input bindings read a per-frame `InputSnapshot`; audio bindings call the live `AudioEngine4D` via an `AudioRef`. `tests/lua_ecs_bridge.rs` guards the bridge.
+- **Wave 5 — Lua demo game (`games/demo/`):** a shipped game directory with no compiled game code, exercising the full scripting surface — scripted 4D rotation in W-involving planes, a 4D-AABB trigger zone with a spatial audio cue + HUD flash + manual sine scale-pulse, a HUD readout, and synthesized WAV cues. Run with `R4D_SCENE__PATH=games/demo/scenes/demo.ron cargo run -- --game games/demo`; headless smoke via `cargo run --example demo_smoke`.
 
 ### Changed
 
