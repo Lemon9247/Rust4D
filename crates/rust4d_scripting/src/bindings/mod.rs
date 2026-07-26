@@ -19,6 +19,7 @@ pub mod audio;
 pub mod ecs;
 pub mod hud;
 pub mod input;
+pub mod logging;
 pub mod math;
 pub mod physics;
 
@@ -39,6 +40,7 @@ use mlua::{Lua, Result as LuaResult};
 /// - `audio` - Audio playback table
 /// - `hud` - HUD drawing table
 pub fn register_all(lua: &Lua) -> LuaResult<()> {
+    logging::register(lua)?;
     ecs::register(lua)?;
     math::register(lua)?;
     physics::register(lua)?;
