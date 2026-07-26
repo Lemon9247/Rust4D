@@ -598,12 +598,21 @@ operate on the real `hecs::World` via an explicit component-name registry
 
 ```bash
 cargo run -- --game games/trivial      # lifecycle smoke test
-cargo run -- --game games/demo          # full demo (Wave 5 Phase 3)
+# Full demo (Wave 5 Phase 3) — the demo ships its own scene, so point the
+# scene path at it via env (the scene path is independent of --game):
+R4D_SCENE__PATH=games/demo/scenes/demo.ron cargo run -- --game games/demo
+# Headless smoke (no window/GPU/audio) drives the real Lua lifecycle:
+cargo run --example demo_smoke
 ```
 
 `--game <dir>` overrides `[game].game_dir` in `config/default.toml`. The
 engine loads `<game_dir>/main.lua`; `require()` resolves modules relative to
-the game directory.
+the game directory. The scene is loaded from `[scene].path` (default
+`scenes/default.ron`), which is independent of `--game`, so a game that ships
+its own scene points the path at it via `R4D_SCENE__PATH` (or `config/user.toml`).
+See `games/demo/README.md` for the full feature matrix and engine limitations
+the demo works around (no player-position binding, HUD render-stubs,
+TweenManager not Lua-bound).
 
 ### Marching Tetrahedra
 

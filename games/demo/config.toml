@@ -1,0 +1,32 @@
+# games/demo/config.toml — reference config for the Wave 5 Lua demo.
+#
+# The engine loads its config from `config/default.toml` + `config/user.toml` +
+# `R4D_*` env vars (see `src/config.rs`), NOT from this file. This file is a
+# reference: copy any block into `config/user.toml` (gitignored) or export the
+# matching `R4D_*` env vars to apply it.
+#
+# The two settings the demo needs at runtime are:
+#   [scene] path  -> games/demo/scenes/demo.ron
+#   [game] game_dir -> games/demo
+# `--game games/demo` sets game_dir on the CLI; the scene path is set via env:
+#
+#   R4D_SCENE__PATH=games/demo/scenes/demo.ron cargo run -- --game games/demo
+#
+# (Keeping `config/default.toml` unchanged so `cargo run` still boots the
+# default scene; see games/demo/README.md.)
+
+[scene]
+path = "games/demo/scenes/demo.ron"
+player_radius = 0.5
+
+[game]
+game_dir = "games/demo"
+scripts_dir = ""        # main.lua lives at the game_dir root
+hot_reload = false      # flip to true for live Lua editing during dev
+audio_enabled = true
+
+[audio]
+master_volume = 1.0
+sfx_volume = 1.0
+music_volume = 0.0      # demo has no music bus
+ambient_volume = 0.0
