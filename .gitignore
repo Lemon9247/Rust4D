@@ -2,3 +2,5 @@
 config/user.toml
 /scratchpad
 /.scratchpad
+.pi/
+.scratchpad-wave5/
