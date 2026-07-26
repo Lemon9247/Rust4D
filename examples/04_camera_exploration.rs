@@ -399,6 +399,10 @@ impl ApplicationHandler for App {
                         diffuse_strength: 0.7,
                         w_color_strength: 0.5,
                         w_range: 2.0,
+                        // Floor checker colors match the CheckerboardGeometry
+                        // above (dark/light gray, 2-unit cells).
+                        floor_color_a: [0.25, 0.25, 0.30, 2.0],
+                        floor_color_b: [0.55, 0.55, 0.60, 1.0],
                         ..RenderUniforms::default()
                     };
                     rp.update_uniforms(&ctx.queue, &render_uniforms);

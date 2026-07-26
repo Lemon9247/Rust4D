@@ -37,7 +37,7 @@ impl SlicePipeline {
     /// # Arguments
     /// * `device` - The wgpu device
     /// * `max_triangles` - Maximum number of triangles to allocate buffer space for.
-    ///   Each triangle requires 3 vertices x 48 bytes = 144 bytes.
+    ///   Each triangle requires 3 vertices x 64 bytes = 192 bytes.
     ///   Will be clamped to the GPU's max_storage_buffer_binding_size limit.
     pub fn new(device: &wgpu::Device, max_triangles: usize) -> Self {
         // Calculate bytes per triangle and clamp to GPU limits
@@ -305,14 +305,14 @@ mod tests {
     fn test_output_buffer_size_calculation() {
         // Test the buffer size calculation for various triangle counts
         let vertex_size = std::mem::size_of::<Vertex3D>();
-        assert_eq!(vertex_size, 48); // 48 bytes per vertex
+        assert_eq!(vertex_size, 64); // 64 bytes per vertex
 
-        // 100,000 triangles * 3 vertices * 48 bytes = 14,400,000 bytes
+        // 100,000 triangles * 3 vertices * 64 bytes = 19,200,000 bytes
         let size_100k = 100_000 * TRIANGLE_VERTEX_COUNT * vertex_size;
-        assert_eq!(size_100k, 14_400_000);
+        assert_eq!(size_100k, 19_200_000);
 
-        // 1,000,000 triangles (config default) * 3 vertices * 48 bytes = 144,000,000 bytes
+        // 1,000,000 triangles (config default) * 3 vertices * 64 bytes = 192,000,000 bytes
         let size_1m = 1_000_000 * TRIANGLE_VERTEX_COUNT * vertex_size;
-        assert_eq!(size_1m, 144_000_000);
+        assert_eq!(size_1m, 192_000_000);
     }
 }

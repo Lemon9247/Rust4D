@@ -34,7 +34,7 @@ struct Tetrahedron {
 }
 
 /// A 3D triangle vertex for output
-/// Layout must match Rust Vertex3D: 48 bytes total (12 floats)
+/// Layout must match Rust Vertex3D: 64 bytes total (16 floats)
 struct Vertex3D {
     pos_x: f32,
     pos_y: f32,
@@ -47,7 +47,13 @@ struct Vertex3D {
     color_b: f32,
     color_a: f32,
     w_depth: f32,
-    _padding: f32,
+    // World-space XYZ of the sliced intersection point (for fragment-space
+    // patterns such as the floor checkerboard).
+    world_x: f32,
+    world_y: f32,
+    world_z: f32,
+    _pad0: f32,
+    _pad1: f32,
 }
 
 /// A 3D triangle (3 vertices)
@@ -149,20 +155,26 @@ fn transform_to_camera_space(world_pos: vec4<f32>, camera_pos: vec4<f32>, camera
     return transpose(camera_mat) * relative_pos;
 }
 
-/// Compute the intersection point on an edge
+/// Compute the intersection point on an edge.
+/// `p0`/`p1` are the camera-space 4D endpoints (used for slicing);
+/// `w0`/`w1` are the matching world-space 4D endpoints (used to derive the
+/// world-space XYZ of the intersection for fragment-space patterns).
 fn edge_intersection(
     p0: vec4<f32>,
     p1: vec4<f32>,
+    w0: vec4<f32>,
+    w1: vec4<f32>,
     c0: vec4<f32>,
     c1: vec4<f32>,
     slice_w: f32
 ) -> Vertex3D {
-    let w0 = p0.w;
-    let w1 = p1.w;
-    let dw = w1 - w0;
-    let t = select((slice_w - w0) / dw, 0.5, abs(dw) < 0.0001);
+    let w0v = p0.w;
+    let w1v = p1.w;
+    let dw = w1v - w0v;
+    let t = select((slice_w - w0v) / dw, 0.5, abs(dw) < 0.0001);
 
     let pos = mix(p0, p1, t);
+    let world = mix(w0, w1, t);
     let color = mix(c0, c1, t);
 
     var vertex: Vertex3D;
@@ -177,7 +189,11 @@ fn edge_intersection(
     vertex.color_b = color.b;
     vertex.color_a = color.a;
     vertex.w_depth = slice_w;
-    vertex._padding = 0.0;
+    vertex.world_x = world.x;
+    vertex.world_y = world.y;
+    vertex.world_z = world.z;
+    vertex._pad0 = 0.0;
+    vertex._pad1 = 0.0;
     return vertex;
 }
 
@@ -227,6 +243,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let v2 = vertices[tet.v2];
     let v3 = vertices[tet.v3];
 
+    // World-space 4D positions (Vertex4D.position is world space; the
+    // geometry builder transforms vertices to world space before upload).
+    // Kept separate from `pos` so the intersection can output world XYZ for
+    // fragment-space patterns (e.g. the floor checkerboard) without altering
+    // the camera-space slicing math.
+    var wpos: array<vec4<f32>, 4>;
+    wpos[0] = v0.position;
+    wpos[1] = v1.position;
+    wpos[2] = v2.position;
+    wpos[3] = v3.position;
+
     var pos: array<vec4<f32>, 4>;
     pos[0] = transform_to_camera_space(v0.position, camera_pos, camera_mat);
     pos[1] = transform_to_camera_space(v1.position, camera_pos, camera_mat);
@@ -265,6 +292,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let ev1 = TETRA_EDGE_V1[edge];
             points[point_idx] = edge_intersection(
                 pos[ev0], pos[ev1],
+                wpos[ev0], wpos[ev1],
                 col[ev0], col[ev1],
                 slice_w
             );

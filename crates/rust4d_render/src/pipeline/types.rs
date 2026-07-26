@@ -67,19 +67,31 @@ impl GpuTetrahedron {
 /// A vertex in the 3D cross-section output
 ///
 /// Produced by the slice compute shader and consumed by the render pipeline.
+///
+/// Layout: 64 bytes (16 floats), 16-byte aligned. The `world_position` field
+/// carries the world-space XYZ of the sliced intersection point, interpolated
+/// from the 4D edge endpoints. It lets the fragment shader compute
+/// resolution-independent patterns (e.g. the floor checkerboard) from the
+/// sliced world coordinates instead of from smeared per-vertex colors.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex3D {
-    /// Position in 3D space (x, y, z)
+    /// Position in 3D camera space (x, y, z) — the slice shader outputs
+    /// camera-space coordinates, so the render pass uses an identity view matrix.
     pub position: [f32; 3],
     /// Surface normal for lighting
     pub normal: [f32; 3],
-    /// RGBA color (interpolated from 4D vertices)
+    /// RGBA color (interpolated from 4D vertices). For floor vertices the
+    /// alpha channel carries a sentinel value > 1.0 (see `FLOOR_ALPHA_SENTINEL`)
+    /// so the fragment shader can identify floor fragments and apply the
+    /// fragment-space checker; the shader rewrites the output alpha to 1.0.
     pub color: [f32; 4],
     /// Original W depth (for depth-based effects)
     pub w_depth: f32,
-    /// Padding to align to 16 bytes
-    pub _padding: f32,
+    /// World-space XYZ of the sliced intersection point.
+    pub world_position: [f32; 3],
+    /// Padding to align the struct to 16 bytes (64-byte total).
+    pub _padding: [f32; 2],
 }
 
 impl Default for Vertex3D {
@@ -89,7 +101,8 @@ impl Default for Vertex3D {
             normal: [0.0, 0.0, 1.0],
             color: [1.0; 4],
             w_depth: 0.0,
-            _padding: 0.0,
+            world_position: [0.0; 3],
+            _padding: [0.0; 2],
         }
     }
 }
@@ -156,7 +169,7 @@ impl Default for PointLightUniform {
 }
 
 /// Render uniforms for the 3D rendering pass.
-/// Layout: 336 bytes total (must match render.wgsl RenderUniforms).
+/// Layout: 368 bytes total (must match render.wgsl RenderUniforms).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct RenderUniforms {
@@ -185,6 +198,13 @@ pub struct RenderUniforms {
     pub _padding_fog: f32,
     /// Up to four point lights (128 bytes)
     pub point_lights: [PointLightUniform; 4],
+    /// Floor checkerboard color A + cell size packed into `.w` (16 bytes).
+    /// Used by the fragment shader to render a crisp, resolution-independent
+    /// checker on floor fragments identified by `FLOOR_ALPHA_SENTINEL`.
+    pub floor_color_a: [f32; 4],
+    /// Floor checkerboard color B + enabled flag packed into `.w` (16 bytes).
+    /// A value > 0.5 enables the fragment-space checker.
+    pub floor_color_b: [f32; 4],
 }
 
 impl Default for RenderUniforms {
@@ -222,6 +242,11 @@ impl Default for RenderUniforms {
                 PointLightUniform::default(),
                 PointLightUniform::default(),
             ],
+            // Floor checker defaults match `src/systems/geometry.rs`'s
+            // `CheckerboardGeometry` (dark/light gray, 2-unit cells). The
+            // `.w` slots carry cell_size and the enabled flag respectively.
+            floor_color_a: [0.3, 0.3, 0.35, 2.0],
+            floor_color_b: [0.7, 0.7, 0.75, 1.0],
         }
     }
 }
@@ -236,6 +261,16 @@ pub struct AtomicCounter {
 /// Default maximum triangles for tests and fallback.
 /// Production code should use the value from config (rendering.max_triangles).
 pub const MAX_OUTPUT_TRIANGLES: usize = 100_000;
+
+/// Sentinel written into the alpha channel of floor vertex colors by
+/// [`crate::renderable::CheckerboardGeometry`] so the render fragment shader
+/// can identify floor fragments and apply the fragment-space checkerboard.
+///
+/// Values > 1.0 are outside the normal alpha range, so they cannot collide
+/// with legitimate per-vertex alphas. The fragment shader rewrites the output
+/// alpha to 1.0 for floor fragments, so this sentinel never reaches the
+/// blend target.
+pub const FLOOR_ALPHA_SENTINEL: f32 = 2.0;
 
 /// Size of a single triangle in Vertex3D units (3 vertices)
 pub const TRIANGLE_VERTEX_COUNT: usize = 3;
@@ -259,9 +294,9 @@ mod tests {
 
     #[test]
     fn test_vertex3d_size() {
-        // 3 floats position + 3 floats normal + 4 floats color + 1 float w_depth + 1 float padding
-        // = 12 floats = 48 bytes
-        assert_eq!(size_of::<Vertex3D>(), 48);
+        // 3 position + 3 normal + 4 color + 1 w_depth + 3 world_position + 2 padding
+        // = 16 floats = 64 bytes
+        assert_eq!(size_of::<Vertex3D>(), 64);
     }
 
     #[test]
@@ -278,10 +313,10 @@ mod tests {
 
     #[test]
     fn test_render_uniforms_size() {
-        // 16 floats view + 16 projection + 4 directional-light slot +
-        // 4 camera slot + 4 lighting params + 4 w/fog params + 4 fog slot +
-        // 4 point lights × 8 floats = 84 floats = 336 bytes
-        assert_eq!(size_of::<RenderUniforms>(), 336);
+        // 16 view + 16 projection + 4 directional-light + 4 camera + 4 lighting +
+        // 4 w/fog + 4 fog + 4 point lights × 8 floats + 4 floor_color_a +
+        // 4 floor_color_b = 92 floats = 368 bytes
+        assert_eq!(size_of::<RenderUniforms>(), 368);
     }
 
     #[test]

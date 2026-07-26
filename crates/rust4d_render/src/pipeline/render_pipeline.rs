@@ -188,6 +188,12 @@ impl RenderPipeline {
                     offset: 40,
                     shader_location: 3,
                 },
+                // world_position: vec3<f32> (world-space XYZ of the sliced point)
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 44,
+                    shader_location: 4,
+                },
             ],
         }
     }
