@@ -33,36 +33,17 @@ impl WorldRef {
     pub fn new(world: &mut World) -> Self {
         Self(world as *mut World)
     }
-
-    /// # Safety
-    ///
-    /// Caller must ensure the pointer is valid and not mutably borrowed
-    /// elsewhere for the duration of the returned reference.
-    #[allow(clippy::mut_from_ref)]
-    #[inline]
-    pub unsafe fn as_mut(&self) -> &mut World {
-        unsafe { &mut *self.0 }
-    }
 }
 
 /// Per-call handle to an optional `AudioEngine4D`.
 ///
 /// `None` when audio is disabled or unavailable; audio bindings no-op in that
 /// case. `!Send + !Sync`.
-pub struct AudioRef(pub(crate) Option<*const AudioEngine4D>);
+pub struct AudioRef(pub(crate) Option<*mut AudioEngine4D>);
 
 impl AudioRef {
-    pub fn new(audio: Option<&AudioEngine4D>) -> Self {
-        Self(audio.map(|a| a as *const AudioEngine4D))
-    }
-
-    /// # Safety
-    ///
-    /// Caller must ensure the engine, when present, outlives the use of the
-    /// returned reference.
-    #[inline]
-    pub unsafe fn as_ref(&self) -> Option<&AudioEngine4D> {
-        self.0.map(|p| unsafe { &*p })
+    pub fn new(audio: Option<&mut AudioEngine4D>) -> Self {
+        Self(audio.map(|a| a as *mut AudioEngine4D))
     }
 }
 
@@ -105,6 +86,8 @@ pub struct InputSnapshot {
     pub pressed_mouse: HashSet<String>,
     /// Mouse buttons pressed this frame (rising edge).
     pub just_pressed_mouse: HashSet<String>,
+    /// Named actions that became active this frame (rising edge).
+    pub just_pressed_actions: HashSet<String>,
     /// Named action axes in `[-1, 1]` (e.g. `"move_forward"`, `"strafe"`).
     pub actions: HashMap<String, f32>,
 }
@@ -157,10 +140,16 @@ impl InputSnapshot {
         self.actions.insert(name.into(), value);
     }
 
+    /// Mark a named action as just-pressed this frame (rising edge).
+    pub fn mark_action_just_pressed(&mut self, name: impl Into<String>) {
+        self.just_pressed_actions.insert(name.into());
+    }
+
     /// Clear per-frame (rising-edge and delta) state. Call after the frame.
     pub fn end_frame(&mut self) {
         self.just_pressed_keys.clear();
         self.just_pressed_mouse.clear();
+        self.just_pressed_actions.clear();
         self.mouse_delta = (0.0, 0.0);
     }
 
@@ -190,6 +179,16 @@ impl InputSnapshot {
         let pos = self.is_key_pressed(positive) as i32 as f32;
         let neg = self.is_key_pressed(negative) as i32 as f32;
         pos - neg
+    }
+
+    /// Whether an action is currently active (nonzero axis value).
+    pub fn is_action_pressed(&self, name: &str) -> bool {
+        self.actions.get(name).is_some_and(|v| v.abs() > 0.0)
+    }
+
+    /// Whether an action became active this frame (rising edge).
+    pub fn is_action_just_pressed(&self, name: &str) -> bool {
+        self.just_pressed_actions.contains(name)
     }
 }
 

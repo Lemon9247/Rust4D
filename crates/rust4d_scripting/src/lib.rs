@@ -193,21 +193,13 @@ impl ScriptEngine {
     }
 
     /// Register an optional audio engine for the duration of a callback.
-    pub fn set_audio(&self, audio: Option<&rust4d_audio::AudioEngine4D>) {
+    pub fn set_audio(&self, audio: Option<&mut rust4d_audio::AudioEngine4D>) {
         self.lua.set_app_data(AudioRef::new(audio));
     }
 
     /// Remove the per-call audio handle.
     pub fn clear_audio(&self) {
         self.lua.remove_app_data::<AudioRef>();
-    }
-
-    /// Register the physics config so `physics.gravity()` reflects the live
-    /// simulation. Best-effort: clears any previously-registered config first.
-    pub fn set_physics_config(&self) {
-        // The actual PhysicsConfig is set by ScriptSystem when it has one; this
-        // is a hook point. No-op here to avoid overwriting a caller-provided
-        // config (see ScriptSystem::update which sets the config directly).
     }
 
     /// Remove a physics config previously registered via [`Self::set_physics_config_raw`].

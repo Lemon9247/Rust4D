@@ -566,6 +566,45 @@ Controls:
 
 ## Key Algorithms
 
+### Scripting & Audio Integration
+
+The `rust4d_scripting` (Lua 5.4) and `rust4d_audio` (4D spatial audio) crates
+are wired into the app loop by `ScriptSystem` (`src/systems/script.rs`), not
+instantiated by examples only.
+
+**Lifecycle:** `ScriptSystem` owns a `ScriptEngine` and an optional
+`AudioEngine4D`. `on_init` fires on resume; `on_update(dt)` runs in
+`RedrawRequested` *before* `SimulationSystem::update` so scripts can set
+velocities/transforms before physics steps; a fixed-step accumulator drives
+`on_fixed_update`; `on_shutdown` fires on close. Audio degrades to silent when
+no device is available; scripting is disabled when no game directory is
+configured.
+
+**Per-call `app_data` bridge:** `ScriptSystem` does *not* store a borrow of the
+`hecs::World`. Each lifecycle call registers a `WorldRef` (raw pointer to the
+live `rust4d_core::World`), the per-frame `InputSnapshot`, an optional
+`AudioRef`, the `PhysicsConfig`, and a `ScriptMutations` flag into the Lua VM's
+`app_data`, dispatches the callback, then clears them. The ECS/input/audio
+bindings read these back. This keeps the `&mut World` borrow inside the call
+boundary (no `Send`-requiring free pointers across calls). `ScriptMutations`
+tells the app whether to rebuild the geometry cache after scripts run.
+
+**Lua ECS bridge:** `world.spawn`/`query`/`find_by_name`/`despawn`/`get`/`set`
+operate on the real `hecs::World` via an explicit component-name registry
+(`name`, `tags`, `transform`, `material`, `dirty`, `shape`, `physics_body`,
+`parent`, `children`). Shapes and physics bodies cannot be created from Lua.
+
+**Running a scripted game:**
+
+```bash
+cargo run -- --game games/trivial      # lifecycle smoke test
+cargo run -- --game games/demo          # full demo (Wave 5 Phase 3)
+```
+
+`--game <dir>` overrides `[game].game_dir` in `config/default.toml`. The
+engine loads `<game_dir>/main.lua`; `require()` resolves modules relative to
+the game directory.
+
 ### Marching Tetrahedra
 
 The core rendering algorithm slices 4D tetrahedra with a 3D hyperplane.
@@ -1305,4 +1344,4 @@ Potential design for extensibility:
 **Future Considerations**:
 - Dynamic loading of WASM plugins
 - Hot reloading for development
-- Scripting language integration (Lua, Python)
+- Lua ECS bridge for physics queries (raycast / sphere query from scripts)

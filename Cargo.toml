@@ -70,6 +70,10 @@ toml = "0.8"
 serial_test = "3.0"
 ron.workspace = true
 rust4d_audio.workspace = true
+rust4d_scripting.workspace = true
+rust4d_core.workspace = true
+rust4d_math.workspace = true
+tempfile = "3"
 
 [[example]]
 name = "01_hello_tesseract"

@@ -122,7 +122,7 @@ impl ScriptSystem {
 
         engine.set_world(world);
         engine.set_input(input);
-        engine.set_audio(self.audio.as_ref());
+        engine.set_audio(self.audio.as_mut());
         engine.set_physics_config_raw(self.physics.clone());
 
         let update_res = engine.call_update(dt);

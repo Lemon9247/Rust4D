@@ -2603,6 +2603,7 @@ dependencies = [
  "rust4d_scripting",
  "serde",
  "serial_test",
+ "tempfile",
  "toml",
  "wgpu",
  "winit",

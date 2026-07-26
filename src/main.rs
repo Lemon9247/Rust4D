@@ -207,6 +207,17 @@ impl App {
                 .set_action(camera_action_name(action), value);
         }
     }
+
+    /// Mark actions bound to `key` as just-pressed this frame (rising edge).
+    fn mark_actions_just_pressed(&mut self, key: KeyCode) {
+        let bindings = self.controller.action_map().bindings();
+        for &(bound_key, action) in bindings {
+            if bound_key == key {
+                self.input_snapshot
+                    .mark_action_just_pressed(camera_action_name(action));
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -266,6 +277,7 @@ impl ApplicationHandler for App {
                         if pressed {
                             self.pressed_keycodes.insert(key);
                             self.input_snapshot.press_key(name);
+                            self.mark_actions_just_pressed(key);
                         } else {
                             self.pressed_keycodes.remove(&key);
                             self.input_snapshot.release_key(name);
