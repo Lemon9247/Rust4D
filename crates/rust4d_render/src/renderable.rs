@@ -3,7 +3,7 @@
 //! This module converts the abstract shape data from rust4d_core into
 //! GPU-compatible vertex and tetrahedra buffers.
 
-use crate::pipeline::{GpuTetrahedron, Vertex4D};
+use crate::pipeline::{GpuTetrahedron, Vertex4D, FLOOR_ALPHA_SENTINEL};
 use rust4d_core::{Material, ShapeRef, Transform4D, World};
 use rust4d_math::Vec4;
 
@@ -157,15 +157,24 @@ impl CheckerboardGeometry {
     }
 
     /// Get the color for a vertex based on its XZ position
+    ///
+    /// The returned RGB is the cell's checker color. The alpha channel is set
+    /// to [`FLOOR_ALPHA_SENTINEL`] so the render fragment shader can identify
+    /// floor fragments and recompute the checker in fragment space from the
+    /// sliced world XZ (producing crisp, resolution-independent cell boundaries
+    /// instead of the smeared per-vertex gradient). The original `color_a` /
+    /// `color_b` alpha is preserved in the RGB channels' companion only when
+    /// the fragment-space path is disabled — see `RenderUniforms::floor_color_b.w`.
     pub fn color_for_position(&self, x: f32, z: f32) -> [f32; 4] {
         let cell_x = (x / self.cell_size).floor() as i32;
         let cell_z = (z / self.cell_size).floor() as i32;
 
-        if (cell_x + cell_z) % 2 == 0 {
+        let rgb = if (cell_x + cell_z) % 2 == 0 {
             self.color_a
         } else {
             self.color_b
-        }
+        };
+        [rgb[0], rgb[1], rgb[2], FLOOR_ALPHA_SENTINEL]
     }
 
     /// Create a color function that applies checkerboard pattern
@@ -298,13 +307,13 @@ mod tests {
             1.0,
         );
 
-        // (0, 0) -> cell (0, 0) -> even -> white
+        // (0, 0) -> cell (0, 0) -> even -> white, alpha = floor sentinel
         let c1 = checker.color_for_position(0.5, 0.5);
-        assert_eq!(c1, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(c1, [1.0, 1.0, 1.0, FLOOR_ALPHA_SENTINEL]);
 
-        // (1, 0) -> cell (1, 0) -> odd -> black
+        // (1, 0) -> cell (1, 0) -> odd -> black, alpha = floor sentinel
         let c2 = checker.color_for_position(1.5, 0.5);
-        assert_eq!(c2, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(c2, [0.0, 0.0, 0.0, FLOOR_ALPHA_SENTINEL]);
     }
 
     #[test]

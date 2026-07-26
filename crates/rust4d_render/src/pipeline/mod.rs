@@ -17,7 +17,7 @@ pub use lookup_tables::{
 // Re-export types
 pub use types::{
     AtomicCounter, GpuTetrahedron, RenderUniforms, SliceParams, Vertex3D, Vertex4D,
-    MAX_OUTPUT_TRIANGLES, TRIANGLE_VERTEX_COUNT,
+    FLOOR_ALPHA_SENTINEL, MAX_OUTPUT_TRIANGLES, TRIANGLE_VERTEX_COUNT,
 };
 
 // Re-export pipelines

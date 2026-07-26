@@ -8,6 +8,16 @@ Conventional Commits.
 
 ### Added
 
+- Fragment-space floor checkerboard: the render pipeline now passes the
+  sliced world-space XYZ through to the fragment shader and computes the
+  checker pattern per-pixel from world XZ (`mod(floor(x/cell) +
+  floor(z/cell), 2)`), producing crisp, resolution-independent cell
+  boundaries instead of the smeared per-vertex gradient on large hyperplane
+  faces. Floor fragments are tagged via a sentinel vertex alpha written by
+  `CheckerboardGeometry`; the two floor colors and cell size are carried in
+  new `RenderUniforms` fields (`floor_color_a` / `floor_color_b`).
+- `Vertex3D` gains a `world_position` field (struct grows 48 → 64 bytes) and
+  `FLOOR_ALPHA_SENTINEL` is re-exported from `rust4d_render::pipeline`.
 - General `Mesh4D` tetrahedral mesh type with merge, transform, weld,
   validation, Gram-determinant cell volumes, and watertightness checks.
 - Full primitive catalog:

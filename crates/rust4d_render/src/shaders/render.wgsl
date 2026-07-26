@@ -19,6 +19,7 @@ struct VertexInput {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec4<f32>,
     @location(3) w_depth: f32,
+    @location(4) world_position: vec3<f32>,
 }
 
 /// Vertex output to fragment shader
@@ -28,6 +29,7 @@ struct VertexOutput {
     @location(1) world_normal: vec3<f32>,
     @location(2) vertex_color: vec4<f32>,
     @location(3) w_depth: f32,
+    @location(4) slice_world_position: vec3<f32>,
 }
 
 /// Point light, layout-matched with Rust `PointLightUniform`.
@@ -36,7 +38,7 @@ struct PointLight {
     color_intensity: vec4<f32>,   // rgb color, w intensity
 }
 
-/// Render uniforms, layout-matched with Rust `RenderUniforms` (336 bytes).
+/// Render uniforms, layout-matched with Rust `RenderUniforms` (368 bytes).
 struct RenderUniforms {
     view_matrix: mat4x4<f32>,
     projection_matrix: mat4x4<f32>,
@@ -55,6 +57,12 @@ struct RenderUniforms {
     fog_color: vec3<f32>,
     _pad_fog: f32,
     point_lights: array<PointLight, 4>,
+    // Floor checkerboard: color A + cell size in `.w`, color B + enabled flag in `.w`.
+    // Floor fragments are identified by a sentinel alpha (> 1.0) written into
+    // the vertex color by CheckerboardGeometry; the fragment shader rewrites
+    // the output alpha to 1.0 for those fragments.
+    floor_color_a: vec4<f32>,
+    floor_color_b: vec4<f32>,
 }
 
 // ============================================================================
@@ -79,6 +87,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.world_normal = input.normal;
     output.vertex_color = input.color;
     output.w_depth = input.w_depth;
+    output.slice_world_position = input.world_position;
 
     return output;
 }
@@ -128,6 +137,26 @@ fn blinn_phong(
     );
 }
 
+/// Sentinel alpha written into floor vertex colors by CheckerboardGeometry.
+/// Values > 1.0 are outside the normal alpha range, so they cannot collide
+/// with legitimate per-vertex alphas. Kept in sync with Rust's
+/// `FLOOR_ALPHA_SENTINEL`.
+const FLOOR_ALPHA_SENTINEL: f32 = 2.0;
+
+/// Compute a crisp, resolution-independent checkerboard color from the sliced
+/// world XZ. Returns the picked floor color (rgb) — the caller owns alpha.
+fn floor_checker_color(world_xz: vec2<f32>) -> vec3<f32> {
+    let cell_size = max(uniforms.floor_color_a.w, 0.0001);
+    let cell = floor(world_xz.x / cell_size) + floor(world_xz.y / cell_size);
+    // Floored modulo (handles negative cell sums): parity is 0 for even cells,
+    // 1 for odd cells.
+    let parity = cell - 2.0 * floor(cell / 2.0);
+    if (parity < 1.0) {
+        return uniforms.floor_color_a.rgb;
+    }
+    return uniforms.floor_color_b.rgb;
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let base_normal = safe_normalize(input.world_normal, vec3<f32>(0.0, 0.0, 1.0));
@@ -140,7 +169,23 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let w_color = w_depth_to_color(input.w_depth, uniforms.w_range);
-    let base_color = input.vertex_color.rgb;
+
+    // Floor fragments are tagged with a sentinel alpha. Recompute the checker
+    // in fragment space from the sliced world XZ so cell boundaries stay crisp
+    // regardless of floor face size (the per-vertex checker smears across
+    // large hyperplane faces). When disabled (floor_color_b.w < 0.5), fall
+    // back to the (smeared) per-vertex color.
+    let is_floor = input.vertex_color.a > FLOOR_ALPHA_SENTINEL * 0.75;
+    let checker_enabled = uniforms.floor_color_b.w > 0.5;
+    var base_color = input.vertex_color.rgb;
+    var out_alpha = input.vertex_color.a;
+    if (is_floor) {
+        out_alpha = 1.0;
+        if (checker_enabled) {
+            base_color = floor_checker_color(input.slice_world_position.xz);
+        }
+    }
+
     let blended_color = mix(base_color, w_color, uniforms.w_color_strength);
 
     var light = vec3<f32>(uniforms.ambient_strength);
@@ -174,5 +219,5 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let fog_amount = clamp(1.0 - exp(-distance_to_camera * uniforms.fog_density), 0.0, 1.0);
     final_color = mix(final_color, uniforms.fog_color, fog_amount);
 
-    return vec4<f32>(final_color, input.vertex_color.a);
+    return vec4<f32>(final_color, out_alpha);
 }
